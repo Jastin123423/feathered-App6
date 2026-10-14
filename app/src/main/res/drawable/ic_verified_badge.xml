@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 12-Point Scalloped Starburst Rosette with rounded tips and valleys -->
+    <path
+        android:fillColor="#1877F2"
+        android:pathData="M 10.85 2.14 Q 12.00 1.00 13.15 2.14 Q 14.30 3.29 15.90 2.92 Q 17.50 2.54 17.92 4.10 Q 18.34 5.66 19.90 6.10 Q 21.46 6.54 21.08 8.10 Q 20.71 9.70 21.86 10.85 Q 23.00 12.00 21.86 13.15 Q 20.71 14.30 21.08 15.90 Q 21.46 17.50 19.90 17.92 Q 18.34 18.34 17.92 19.90 Q 17.50 21.46 15.90 21.08 Q 14.30 20.71 13.15 21.86 Q 12.00 23.00 10.85 21.86 Q 9.70 20.71 8.10 21.08 Q 6.54 21.46 6.10 19.90 Q 5.66 18.34 4.10 17.92 Q 2.54 17.50 2.92 15.90 Q 3.29 14.30 2.14 13.15 Q 1.00 12.00 2.14 10.85 Q 3.29 9.70 2.92 8.10 Q 2.54 6.54 4.10 6.10 Q 5.66 5.66 6.10 4.10 Q 6.54 2.54 8.10 2.92 Q 9.70 3.29 10.85 2.14 Z" />
+    <!-- Precision Centered White Tick Mark -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M 7.3 12.3 L 10.4 15.4 L 16.7 8.7" />
+</vector>

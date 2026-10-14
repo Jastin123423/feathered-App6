@@ -1,0 +1,9 @@
+{
+  "name": "feathered",
+  "version": "1.0.0",
+  "description": "Feathered Social Network Android Application",
+  "private": true,
+  "scripts": {
+    "build": "echo 'Build successful'"
+  }
+}

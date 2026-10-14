@@ -1,0 +1,12 @@
+{
+  "name": " featherd-app6",
+  "description": "Imported from GitHub",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
