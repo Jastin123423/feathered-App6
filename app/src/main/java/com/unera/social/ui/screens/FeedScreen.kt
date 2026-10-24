@@ -260,9 +260,7 @@ fun FeedScreen(
                             groupJoinedStates = groupJoinedStates + (gid to !current)
                         },
                         onGroupClick = { gid ->
-                            val grp = groups.find { it.id == gid }
-                            val admin = grp?.let { g -> allUsers.find { it.id == g.adminId } } ?: currentUser
-                            onUserClick(admin)
+                            onOpenGroup?.invoke(gid)
                         }
                     )
                     Box(
@@ -1163,7 +1161,8 @@ fun WebPostCard(
                         onOpenProduct = onOpenProduct,
                         onOpenEvent = onOpenEvent,
                         onPlayMusic = onPlayMusic,
-                        onStoryClick = onStoryClick
+                        onStoryClick = onStoryClick,
+                        onOpenGroup = onOpenGroup
                     )
                 }
             }
@@ -1496,19 +1495,17 @@ fun EventPostCard(
     }
 
     Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF0B1120)),
-        border = BorderStroke(1.dp, Color(0xFF1E293B)),
+        shape = RoundedCornerShape(0.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0A101F)),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 6.dp)
             .clickable(onClick = onEventClick)
     ) {
-        Column {
+        Column(modifier = Modifier.fillMaxWidth()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(180.dp)
+                    .height(220.dp)
             ) {
                 AsyncImage(
                     model = event.imageUrl,
@@ -1617,79 +1614,87 @@ fun ProductPostCard(
     }
 
     Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF0B1120)),
-        border = BorderStroke(1.dp, Color(0xFF1E293B)),
+        shape = RoundedCornerShape(0.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0A101F)),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .clickable(onClick = handleViewProduct)
     ) {
-        Column {
-            // MarketPoint Tag
-            Row(
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Product Photo with Price Overlay
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .height(260.dp)
             ) {
+                AsyncImage(
+                    model = product.imageUrl,
+                    contentDescription = product.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFF1877F2).copy(alpha = 0.15f))
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                        .padding(12.dp)
+                        .align(Alignment.BottomEnd)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF10B981).copy(alpha = 0.95f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    Text("MarketPoint", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1877F2))
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-                Icon(Icons.Default.LocationOn, contentDescription = null, tint = Color(0xFFF43F5E), modifier = Modifier.size(14.dp))
-                Spacer(modifier = Modifier.width(3.dp))
-                Text(product.location, fontSize = 12.sp, color = Color(0xFF94A3B8))
-            }
-
-            // Image
-            AsyncImage(
-                model = product.imageUrl,
-                contentDescription = product.title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(240.dp)
-                    .clickable(onClick = handleViewProduct)
-            )
-
-            // Price & View Product Button
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(14.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
                     Text(
                         text = "${product.currency} %,d".format(product.price.toLong()),
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Black,
-                        color = Color(0xFFF8FAFC)
-                    )
-                    Text(
-                        text = product.title,
-                        fontSize = 13.sp,
-                        color = Color(0xFFCBD5E1),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Black
                     )
                 }
+            }
 
+            // Title, location, description & View in MarketPoint button
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp)
+            ) {
+                Text(
+                    text = product.title,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF8FAFC),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (product.location.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.LocationOn, contentDescription = null, tint = Color(0xFFF43F5E), modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(product.location, fontSize = 13.sp, color = Color(0xFF94A3B8))
+                    }
+                }
+                if (product.description.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = product.description,
+                        fontSize = 13.sp,
+                        color = Color(0xFFCBD5E1),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        lineHeight = 18.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
                 Button(
                     onClick = handleViewProduct,
-                    shape = RoundedCornerShape(20.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1877F2))
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1877F2)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
                 ) {
-                    Icon(Icons.Default.ShoppingBag, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("View Product", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Icon(Icons.Default.ShoppingBag, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("View in MarketPoint", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
             }
         }
@@ -2476,7 +2481,8 @@ fun SharedPostNestedCard(
     onOpenProduct: (Product) -> Unit = {},
     onOpenEvent: (Event) -> Unit = {},
     onPlayMusic: (Song) -> Unit = {},
-    onStoryClick: ((Story) -> Unit)? = null
+    onStoryClick: ((Story) -> Unit)? = null,
+    onOpenGroup: (Long) -> Unit = {}
 ) {
     if (sharedPost.product != null || sharedPost.postType == "marketplace" || sharedPost.postType == "product") {
         val prod = sharedPost.product ?: Product(
@@ -2539,7 +2545,9 @@ fun SharedPostNestedCard(
             onPlay = { onPlayMusic(song) }
         )
     } else {
-        // Standard regular post share
+        // Standard regular post share & shared group post
+        var isExpandedSharedText by remember { mutableStateOf(false) }
+        val isGroup = sharedPost.groupId != null
         val mediaList = if (sharedPost.mediaUrls.isNotEmpty()) sharedPost.mediaUrls
             else if (!sharedPost.mediaUrl.isNullOrBlank()) listOf(sharedPost.mediaUrl)
             else emptyList()
@@ -2554,31 +2562,96 @@ fun SharedPostNestedCard(
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
                 // Nested Header
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    AsyncImage(
-                        model = sharedPost.author.profileImageUrl,
-                        contentDescription = sharedPost.author.name,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = sharedPost.author.name,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = Color(0xFFF8FAFC)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (isGroup) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clickable { sharedPost.groupId?.let { onOpenGroup(it) } }
+                        ) {
+                            if (!sharedPost.groupImageUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = sharedPost.groupImageUrl,
+                                    contentDescription = sharedPost.groupName ?: "Group",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .align(Alignment.TopStart)
+                                        .clip(CircleShape)
+                                        .border(1.dp, Color(0xFF1E293B), CircleShape)
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .align(Alignment.TopStart)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF1877F2).copy(alpha = 0.25f))
+                                        .border(1.dp, Color(0xFF1E293B), CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Groups,
+                                        contentDescription = "Group",
+                                        tint = Color(0xFF1877F2),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                            AsyncImage(
+                                model = sharedPost.author.profileImageUrl,
+                                contentDescription = sharedPost.author.name,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .align(Alignment.BottomEnd)
+                                    .clip(CircleShape)
+                                    .border(2.dp, Color(0xFF0F172A), CircleShape)
                             )
+                        }
+                    } else {
+                        AsyncImage(
+                            model = sharedPost.author.profileImageUrl,
+                            contentDescription = sharedPost.author.name,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (isGroup) {
+                                Text(
+                                    text = sharedPost.groupName ?: "Group",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                    color = Color(0xFFF8FAFC),
+                                    modifier = Modifier.clickable { sharedPost.groupId?.let { onOpenGroup(it) } }
+                                )
+                            } else {
+                                Text(
+                                    text = sharedPost.author.name,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = Color(0xFFF8FAFC)
+                                )
+                            }
                             if (sharedPost.author.isVerified) {
                                 Spacer(modifier = Modifier.width(4.dp))
-                                VerifiedBadge(size = 12.dp)
+                                VerifiedBadge(size = 14.dp)
                             }
                         }
                         Text(
-                            text = PostsApiService.formatRelativeTime(sharedPost.timestamp),
+                            text = if (isGroup) {
+                                "${sharedPost.author.name} • ${PostsApiService.formatRelativeTime(sharedPost.timestamp)}"
+                            } else {
+                                PostsApiService.formatRelativeTime(sharedPost.timestamp)
+                            },
                             fontSize = 11.sp,
                             color = Color(0xFF94A3B8)
                         )
@@ -2586,13 +2659,45 @@ fun SharedPostNestedCard(
                 }
 
                 if (sharedPost.content.isNotBlank()) {
+                    val words = remember(sharedPost.content) {
+                        sharedPost.content.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+                    }
+                    val hasMoreThan8Words = words.size > 8
+                    val truncatedContent = remember(sharedPost.content, words) {
+                        if (words.size > 8) words.take(8).joinToString(" ") + "…" else sharedPost.content
+                    }
+
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = sharedPost.content,
-                        fontSize = 13.sp,
-                        color = Color(0xFFCBD5E1),
-                        lineHeight = 18.sp
+                        text = if (!hasMoreThan8Words || isExpandedSharedText) sharedPost.content else truncatedContent,
+                        fontSize = 20.sp,
+                        lineHeight = 28.sp,
+                        color = Color(0xFFCBD5E1)
                     )
+                    if (hasMoreThan8Words) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { isExpandedSharedText = !isExpandedSharedText }
+                                .padding(vertical = 4.dp, horizontal = 2.dp)
+                        ) {
+                            Text(
+                                text = if (isExpandedSharedText) "See Less" else "See More",
+                                color = Color(0xFF1877F2),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = if (isExpandedSharedText) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = null,
+                                tint = Color(0xFF1877F2),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
                 }
 
                 if (mediaList.isNotEmpty()) {
@@ -2779,7 +2884,9 @@ fun GroupsYouMayJoinSection(
                     shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
                     border = BorderStroke(1.dp, Color(0xFF334155).copy(alpha = 0.5f)),
-                    modifier = Modifier.width(220.dp)
+                    modifier = Modifier
+                        .width(220.dp)
+                        .clickable { onGroupClick(group.id) }
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         // Cover Image with Public/Private tag

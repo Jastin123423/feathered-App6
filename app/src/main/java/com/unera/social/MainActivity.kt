@@ -274,9 +274,8 @@ fun FeatheredApp(
                         onOpenProduct = { product -> viewModel.setSelectedProductForDetail(product) },
                         onOpenEvent = { _ -> viewModel.setScreen(Screen.EVENTS) },
                         onOpenGroup = { groupId ->
-                            val grp = uiState.groups.find { it.id == groupId }
-                            val admin = grp?.let { g -> uiState.users.find { it.id == g.adminId } } ?: uiState.currentUser
-                            viewModel.openUserProfile(admin)
+                            viewModel.setActiveGroupId(groupId)
+                            viewModel.setScreen(Screen.GROUPS)
                         },
                         onOpenVideos = { viewModel.setScreen(Screen.REELS) },
                         onDeletePost = { viewModel.deletePost(it) },
