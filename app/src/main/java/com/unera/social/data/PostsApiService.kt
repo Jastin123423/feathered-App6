@@ -10,6 +10,9 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 
 object PostsApiService {
     private const val BASE_URL = "https://featheredsocial.site"
@@ -895,14 +898,86 @@ object PostsApiService {
         return list
     }
 
-    private fun formatTimestamp(raw: String?): String {
-        if (raw.isNullOrBlank() || raw == "null") return "Just now"
-        return try {
-            val clean = raw.replace("T", " ").substringBefore(".")
-            clean
-        } catch (_: Exception) {
-            raw
+    fun formatRelativeTime(raw: String?): String {
+        if (raw.isNullOrBlank() || raw.equals("null", ignoreCase = true)) return "Just now"
+        val trimmed = raw.trim()
+
+        if (trimmed.equals("Just now", ignoreCase = true)) return "Just now"
+        if (Regex("""^\d+\s*(hr|hrs|week|weeks|Month|Months|Year|Years)$""").matches(trimmed)) return trimmed
+
+        val epochMillis = when {
+            trimmed.toLongOrNull() != null -> {
+                val num = trimmed.toLong()
+                if (num > 100_000_000_000L) num else num * 1000L
+            }
+            else -> parseDateToMillis(trimmed)
         }
+
+        if (epochMillis == null || epochMillis <= 0L) {
+            val agoMatch = Regex("""(\d+)\s*([mhdwMy])\s*(?:ago)?""", RegexOption.IGNORE_CASE).find(trimmed)
+            if (agoMatch != null) {
+                val amount = agoMatch.groupValues[1].toIntOrNull() ?: 1
+                val unit = agoMatch.groupValues[2].lowercase()
+                return when (unit) {
+                    "m" -> "${amount}m"
+                    "h" -> if (amount == 1) "1hr" else "${amount}hrs"
+                    "d" -> "${amount}d"
+                    "w" -> if (amount == 1) "1week" else "${amount}weeks"
+                    "y" -> if (amount == 1) "1 Year" else "${amount} Years"
+                    else -> trimmed
+                }
+            }
+            return trimmed
+        }
+
+        val now = System.currentTimeMillis()
+        val diffMillis = (now - epochMillis).coerceAtLeast(0L)
+
+        val seconds = diffMillis / 1000L
+        val minutes = seconds / 60L
+        val hours = minutes / 60L
+        val days = hours / 24L
+        val weeks = days / 7L
+        val months = days / 30L
+        val years = days / 365L
+
+        return when {
+            minutes < 1 -> "Just now"
+            hours < 1 -> "${minutes}m"
+            hours < 24 -> if (hours == 1L) "1hr" else "${hours}hrs"
+            days < 7 -> "${days}d"
+            days < 30 -> if (weeks <= 1L) "1week" else "${weeks}weeks"
+            days < 365 -> if (months <= 1L) "1 Month" else "${months} Months"
+            else -> if (years <= 1L) "1 Year" else "${years} Years"
+        }
+    }
+
+    private fun parseDateToMillis(str: String): Long? {
+        val patterns = listOf(
+            "yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS",
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd HH:mm",
+            "yyyy-MM-dd"
+        )
+        for (pattern in patterns) {
+            try {
+                val sdf = SimpleDateFormat(pattern, Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }
+                val date = sdf.parse(str)
+                if (date != null) return date.time
+            } catch (_: Exception) {}
+        }
+        return null
+    }
+
+    private fun formatTimestamp(raw: String?): String {
+        return formatRelativeTime(raw)
     }
 
     private fun extractMediaTypes(obj: JSONObject): List<String> {

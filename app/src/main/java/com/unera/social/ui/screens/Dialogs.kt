@@ -80,6 +80,7 @@ fun CreatePostModal(
     currentUser: User,
     allUsers: List<User> = emptyList(),
     initialMediaUrl: String? = null,
+    initialOpenPicker: String? = null,
     onDismiss: () -> Unit,
     onSubmit: (content: String, mediaUrl: String?, mediaUrls: List<String>, feeling: String?, location: String?, backgroundStyle: String?, taggedUsers: List<Long>) -> Unit,
     onCreateEventClick: (() -> Unit)? = null,
@@ -95,9 +96,6 @@ fun CreatePostModal(
     var locationQuery by remember { mutableStateOf("") }
     var taggedUsers by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var tagSearchQuery by remember { mutableStateOf("") }
-    var showAddMediaDialog by remember { mutableStateOf(false) }
-    var newMediaInputUrl by remember { mutableStateOf("") }
-    var newMediaIsVideo by remember { mutableStateOf(false) }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia()
@@ -116,6 +114,24 @@ fun CreatePostModal(
             activeBackground = null
         }
     }
+
+    var hasLaunchedInitialPicker by remember { mutableStateOf(false) }
+    LaunchedEffect(initialOpenPicker) {
+        if (!hasLaunchedInitialPicker && initialOpenPicker != null) {
+            hasLaunchedInitialPicker = true
+            if (initialOpenPicker == "video") {
+                videoPickerLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                )
+            } else {
+                photoPickerLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            }
+        }
+    }
+
+
 
     val canPost = content.isNotBlank() || mediaUrls.isNotEmpty() || (activeBackground != null && activeBackground?.id != "none")
 
@@ -567,11 +583,11 @@ fun CreatePostModal(
                                         OutlinedTextField(
                                             value = content,
                                             onValueChange = { content = it },
-                                            placeholder = {
+                                             placeholder = {
                                                 Text(
                                                     "What's on your mind?",
                                                     color = Color.White.copy(alpha = 0.7f),
-                                                    fontSize = 24.sp,
+                                                    fontSize = 23.sp,
                                                     fontWeight = FontWeight.ExtraBold,
                                                     textAlign = TextAlign.Center,
                                                     modifier = Modifier.fillMaxWidth()
@@ -586,7 +602,7 @@ fun CreatePostModal(
                                                 unfocusedTextColor = Color.White
                                             ),
                                             textStyle = androidx.compose.ui.text.TextStyle(
-                                                fontSize = 24.sp,
+                                                fontSize = 23.sp,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 textAlign = TextAlign.Center,
                                                 color = Color.White
@@ -646,6 +662,28 @@ fun CreatePostModal(
                                                     modifier = Modifier.fillMaxSize()
                                                 )
 
+                                                // Video Play Indicator Overlay
+                                                val isVideoItem = url.contains("video", ignoreCase = true) ||
+                                                        url.endsWith(".mp4", ignoreCase = true) ||
+                                                        url.endsWith(".mov", ignoreCase = true)
+                                                if (isVideoItem) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(52.dp)
+                                                            .clip(CircleShape)
+                                                            .background(Color.Black.copy(alpha = 0.65f))
+                                                            .align(Alignment.Center),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.PlayArrow,
+                                                            contentDescription = "Video",
+                                                            tint = Color.White,
+                                                            modifier = Modifier.size(34.dp)
+                                                        )
+                                                    }
+                                                }
+
                                                 // Number tag (1, 2, 3...)
                                                 Box(
                                                     modifier = Modifier
@@ -673,6 +711,46 @@ fun CreatePostModal(
                                                 ) {
                                                     Icon(Icons.Default.Close, contentDescription = "Remove", tint = Color.White, modifier = Modifier.size(16.dp))
                                                 }
+                                            }
+                                        }
+
+                                        // Quick buttons to add more media directly from Gallery
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 8.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    photoPickerLauncher.launch(
+                                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                                    )
+                                                },
+                                                shape = RoundedCornerShape(8.dp),
+                                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF10B981)),
+                                                border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(18.dp))
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text("Add Photos", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                            }
+
+                                            OutlinedButton(
+                                                onClick = {
+                                                    videoPickerLauncher.launch(
+                                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                                                    )
+                                                },
+                                                shape = RoundedCornerShape(8.dp),
+                                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFF43F5E)),
+                                                border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Icon(Icons.Default.VideoCall, contentDescription = null, modifier = Modifier.size(18.dp))
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text("Add Video", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                                             }
                                         }
                                     }
@@ -763,8 +841,9 @@ fun CreatePostModal(
                                         iconTint = Color(0xFF45BD62),
                                         label = "Photo",
                                         onClick = {
-                                            newMediaIsVideo = false
-                                            showAddMediaDialog = true
+                                            photoPickerLauncher.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                            )
                                         }
                                     )
 
@@ -774,8 +853,9 @@ fun CreatePostModal(
                                         iconTint = Color(0xFFF3425F),
                                         label = "Video",
                                         onClick = {
-                                            newMediaIsVideo = true
-                                            showAddMediaDialog = true
+                                            videoPickerLauncher.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                                            )
                                         }
                                     )
 
@@ -857,118 +937,6 @@ fun CreatePostModal(
                                     color = if (canPost) Color.White else Color(0xFF94A3B8)
                                 )
                             }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Modal dialog to add media (from Device or URL)
-    if (showAddMediaDialog) {
-        Dialog(onDismissRequest = { showAddMediaDialog = false }) {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF0B1120)),
-                border = BorderStroke(1.dp, Color(0xFF1E293B)),
-                modifier = Modifier.fillMaxWidth().padding(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    Text(
-                        text = if (newMediaIsVideo) "Attach Video" else "Attach Photo",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFF8FAFC)
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Primary Button: Choose from Device
-                    Button(
-                        onClick = {
-                            showAddMediaDialog = false
-                            if (newMediaIsVideo) {
-                                videoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                                )
-                            } else {
-                                photoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1877F2)),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.fillMaxWidth().height(46.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (newMediaIsVideo) Icons.Default.Videocam else Icons.Default.Image,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (newMediaIsVideo) "Choose Video from Device" else "Choose Photos from Device",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        HorizontalDivider(modifier = Modifier.weight(1f), color = Color(0xFF334155))
-                        Text(
-                            text = "  OR PASTE URL  ",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF94A3B8)
-                        )
-                        HorizontalDivider(modifier = Modifier.weight(1f), color = Color(0xFF334155))
-                    }
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    OutlinedTextField(
-                        value = newMediaInputUrl,
-                        onValueChange = { newMediaInputUrl = it },
-                        placeholder = { Text(if (newMediaIsVideo) "Enter video URL (mp4)…" else "Enter photo URL…", color = Color(0xFF94A3B8)) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = Color(0xFF1E293B),
-                            unfocusedContainerColor = Color(0xFF1E293B),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = Color(0xFF1877F2),
-                            unfocusedBorderColor = Color(0xFF334155)
-                        ),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(onClick = { showAddMediaDialog = false }) {
-                            Text("Cancel", color = Color(0xFF94A3B8))
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = {
-                                if (newMediaInputUrl.isNotBlank()) {
-                                    mediaUrls = mediaUrls + newMediaInputUrl.trim()
-                                    newMediaInputUrl = ""
-                                    activeBackground = null
-                                    showAddMediaDialog = false
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text("Add URL", fontWeight = FontWeight.Bold)
                         }
                     }
                 }

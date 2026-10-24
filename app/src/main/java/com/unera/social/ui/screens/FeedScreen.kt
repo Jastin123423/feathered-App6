@@ -44,6 +44,8 @@ fun FeedScreen(
     stories: List<Story>,
     posts: List<Post>,
     onOpenCreatePost: () -> Unit,
+    onPhotoClick: () -> Unit = onOpenCreatePost,
+    onVideoClick: () -> Unit = onOpenCreatePost,
     onStoryClick: (Story) -> Unit,
     onLikePost: (Long) -> Unit,
     onCommentPost: (Post) -> Unit,
@@ -106,8 +108,8 @@ fun FeedScreen(
                 CreatePostSection(
                     currentUser = currentUser,
                     onClick = onOpenCreatePost,
-                    onPhotoClick = onOpenCreatePost,
-                    onVideoClick = onOpenCreatePost,
+                    onPhotoClick = onPhotoClick,
+                    onVideoClick = onVideoClick,
                     onEventClick = onOpenCreatePost
                 )
                 // 8dp gap
@@ -864,7 +866,7 @@ fun WebPostCard(
                             Text(
                                 text = post.groupName ?: "Group",
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
+                                fontSize = 21.sp,
                                 color = Color(0xFFF8FAFC),
                                 modifier = Modifier.clickable { post.groupId?.let { onOpenGroup(it) } }
                             )
@@ -872,15 +874,15 @@ fun WebPostCard(
                             Text(
                                 text = post.author.name,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
+                                fontSize = 21.sp,
                                 color = Color(0xFFF8FAFC),
                                 modifier = Modifier.clickable(onClick = onUserClick)
                             )
                         }
 
                         if (post.author.isVerified) {
-                            Spacer(modifier = Modifier.width(4.dp))
-                            VerifiedBadge(size = 14.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            VerifiedBadge(size = 21.dp)
                         }
 
                         if (post.isSponsored) {
@@ -901,17 +903,18 @@ fun WebPostCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
+                        val displayTime = PostsApiService.formatRelativeTime(post.timestamp)
                         if (post.groupId != null) {
                             Text(
                                 text = post.author.name,
-                                fontSize = 12.sp,
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = Color(0xFFCBD5E1),
                                 modifier = Modifier.clickable(onClick = onUserClick)
                             )
                             Text(
-                                text = " • ${post.timestamp} • ",
-                                fontSize = 12.sp,
+                                text = " • $displayTime • ",
+                                fontSize = 13.sp,
                                 color = Color(0xFF94A3B8)
                             )
                             Icon(
@@ -924,11 +927,11 @@ fun WebPostCard(
                             )
                         } else {
                             Text(
-                                text = post.timestamp,
-                                fontSize = 12.sp,
+                                text = displayTime,
+                                fontSize = 13.sp,
                                 color = Color(0xFF94A3B8)
                             )
-                            Text("•", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                            Text("•", fontSize = 13.sp, color = Color(0xFF94A3B8))
                             Icon(
                                 imageVector = Icons.Default.Public,
                                 contentDescription = "Public",
@@ -937,28 +940,20 @@ fun WebPostCard(
                             )
                         }
 
-                        Text("•", fontSize = 12.sp, color = Color(0xFF94A3B8))
-                        Icon(
-                            imageVector = Icons.Default.Public,
-                            contentDescription = "Public",
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(12.dp)
-                        )
-
                         if (!post.feeling.isNullOrBlank()) {
-                            Text("•", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                            Text("•", fontSize = 13.sp, color = Color(0xFF94A3B8))
                             Text(
                                 text = "feeling ${post.feeling}",
-                                fontSize = 12.sp,
+                                fontSize = 13.sp,
                                 color = Color(0xFF94A3B8)
                             )
                         }
 
                         if (!post.location.isNullOrBlank()) {
-                            Text("•", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                            Text("•", fontSize = 13.sp, color = Color(0xFF94A3B8))
                             Text(
                                 text = post.location,
-                                fontSize = 12.sp,
+                                fontSize = 13.sp,
                                 color = Color(0xFF94A3B8),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -1018,24 +1013,44 @@ fun WebPostCard(
                     (post.song != null && post.content.contains(post.song.title, ignoreCase = true))
 
             if (!isDuplicateText && post.content.isNotBlank() && post.backgroundStyle.isNullOrBlank()) {
-                val isLong = post.content.length > 180
-                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) {
+                val words = remember(post.content) {
+                    post.content.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+                }
+                val hasMoreThan8Words = words.size > 8
+                val truncatedContent = remember(post.content, words) {
+                    if (words.size > 8) words.take(8).joinToString(" ") + "…" else post.content
+                }
+
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
                     Text(
-                        text = if (!isLong || isExpandedText) post.content else post.content.take(180) + "…",
-                        fontSize = 15.sp,
-                        lineHeight = 22.sp,
+                        text = if (!hasMoreThan8Words || isExpandedText) post.content else truncatedContent,
+                        fontSize = 20.sp,
+                        lineHeight = 28.sp,
                         color = Color(0xFFE4E6EB)
                     )
-                    if (isLong) {
-                        Text(
-                            text = if (isExpandedText) "See Less" else "See More",
-                            color = Color(0xFF1877F2),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
+                    if (hasMoreThan8Words) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
                                 .clickable { isExpandedText = !isExpandedText }
-                                .padding(top = 2.dp)
-                        )
+                                .padding(vertical = 4.dp, horizontal = 2.dp)
+                        ) {
+                            Text(
+                                text = if (isExpandedText) "See Less" else "See More",
+                                color = Color(0xFF1877F2),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = if (isExpandedText) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = null,
+                                tint = Color(0xFF1877F2),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             } else if (!post.backgroundStyle.isNullOrBlank() && post.content.isNotBlank()) {
@@ -1060,10 +1075,10 @@ fun WebPostCard(
                     Text(
                         text = post.content,
                         color = Color.White,
-                        fontSize = 22.sp,
+                        fontSize = 23.sp,
                         fontWeight = FontWeight.ExtraBold,
                         textAlign = TextAlign.Center,
-                        lineHeight = 32.sp
+                        lineHeight = 34.sp
                     )
                 }
             }
@@ -2080,7 +2095,7 @@ fun SharedProductCard(
                         }
                     }
                     Text(
-                        text = "Shared a product from MarketPoint • $timestamp",
+                        text = "Shared a product from MarketPoint • ${PostsApiService.formatRelativeTime(timestamp)}",
                         fontSize = 11.sp,
                         color = Color(0xFF94A3B8)
                     )
@@ -2219,7 +2234,7 @@ fun SharedEventCard(
                         color = Color(0xFFF8FAFC)
                     )
                     Text(
-                        text = "Shared an event • $timestamp",
+                        text = "Shared an event • ${PostsApiService.formatRelativeTime(timestamp)}",
                         fontSize = 11.sp,
                         color = Color(0xFF94A3B8)
                     )
@@ -2356,7 +2371,7 @@ fun SharedStoryCard(
                         color = Color(0xFFF8FAFC)
                     )
                     Text(
-                        text = "Shared a Story • $timestamp",
+                        text = "Shared a Story • ${PostsApiService.formatRelativeTime(timestamp)}",
                         fontSize = 11.sp,
                         color = Color(0xFF94A3B8)
                     )
@@ -2563,7 +2578,7 @@ fun SharedPostNestedCard(
                             }
                         }
                         Text(
-                            text = sharedPost.timestamp,
+                            text = PostsApiService.formatRelativeTime(sharedPost.timestamp),
                             fontSize = 11.sp,
                             color = Color(0xFF94A3B8)
                         )

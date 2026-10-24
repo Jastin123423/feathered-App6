@@ -260,6 +260,8 @@ fun FeatheredApp(
                         isFeedLoading = uiState.isFeedLoading,
                         onRefresh = { viewModel.refreshFeed() },
                         onOpenCreatePost = { viewModel.setShowCreatePostDialog(true) },
+                        onPhotoClick = { viewModel.setShowCreatePostDialog(true, "photo") },
+                        onVideoClick = { viewModel.setShowCreatePostDialog(true, "video") },
                         onStoryClick = { viewModel.setSelectedStory(it) },
                         onLikePost = { viewModel.toggleLikePost(it) },
                         onCommentPost = { viewModel.setSelectedPostForComments(it) },
@@ -669,6 +671,7 @@ fun FeatheredApp(
         CreatePostModal(
             currentUser = uiState.currentUser,
             allUsers = uiState.users,
+            initialOpenPicker = uiState.createPostInitialPicker,
             onDismiss = { viewModel.setShowCreatePostDialog(false) },
             onSubmit = { content, mediaUrl, mediaUrls, feeling, location, background, taggedUsers ->
                 viewModel.createPost(

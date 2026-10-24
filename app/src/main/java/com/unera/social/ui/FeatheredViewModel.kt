@@ -55,6 +55,7 @@ data class FeatheredUiState(
     val notifications: List<Notification> = MockData.notifications,
     val searchQuery: String = "",
     val showCreatePostDialog: Boolean = false,
+    val createPostInitialPicker: String? = null,
     val selectedPostForComments: Post? = null,
     val showSearchDialog: Boolean = false,
     val showNotificationsOverlay: Boolean = false,
@@ -1410,8 +1411,8 @@ class FeatheredViewModel : ViewModel() {
         _uiState.update { it.copy(searchQuery = query) }
     }
 
-    fun setShowCreatePostDialog(show: Boolean) {
-        _uiState.update { it.copy(showCreatePostDialog = show) }
+    fun setShowCreatePostDialog(show: Boolean, initialPicker: String? = null) {
+        _uiState.update { it.copy(showCreatePostDialog = show, createPostInitialPicker = if (show) initialPicker else null) }
     }
 
     fun setSelectedPostForComments(post: Post?) {
