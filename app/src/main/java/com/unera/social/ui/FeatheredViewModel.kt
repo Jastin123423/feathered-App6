@@ -9,6 +9,9 @@ import com.unera.social.data.MockData
 import com.unera.social.data.PostsApiService
 import com.unera.social.data.StoriesApiService
 import com.unera.social.data.VideosApiService
+import android.content.Context
+import android.net.Uri
+import com.unera.social.data.MediaUploadHelper
 import com.unera.social.model.*
 import com.unera.social.ui.components.PostUploadState
 import org.json.JSONObject
@@ -639,6 +642,7 @@ class FeatheredViewModel : ViewModel() {
     }
 
     fun createPost(
+        context: Context? = null,
         content: String,
         mediaUrl: String? = null,
         feeling: String? = null,
@@ -670,9 +674,9 @@ class FeatheredViewModel : ViewModel() {
                 showCreatePostDialog = false,
                 postUploadState = PostUploadState(
                     isUploading = true,
-                    progress = 18f,
+                    progress = 10f,
                     title = "Posting to Feathered",
-                    secondaryStatus = if (allMedia.isNotEmpty()) "Uploading media..." else "Publishing post...",
+                    secondaryStatus = if (allMedia.isNotEmpty()) "Preparing media..." else "Publishing post...",
                     previewUrl = allMedia.firstOrNull(),
                     isSuccess = false
                 )
@@ -680,21 +684,88 @@ class FeatheredViewModel : ViewModel() {
         }
 
         viewModelScope.launch {
+            val uploadedMetaList = mutableListOf<MediaMetaItem>()
+            val uploadedUrls = mutableListOf<String>()
+            var primaryVideoUrl: String? = null
+            var primaryThumbUrl: String? = null
+            var isAnyVideo = false
+
+            for ((index, item) in allMedia.withIndex()) {
+                val isLocalUri = item.startsWith("content://") || item.startsWith("file://")
+                if (isLocalUri && context != null) {
+                    val uri = Uri.parse(item)
+                    val mimeType = context.contentResolver.getType(uri) ?: ""
+                    val isVideoItem = mimeType.startsWith("video") || item.contains(".mp4") || item.contains("video")
+                    if (isVideoItem) isAnyVideo = true
+
+                    val result = MediaUploadHelper.processAndUploadMedia(
+                        context = context,
+                        uri = uri,
+                        isVideoHint = isVideoItem
+                    ) { statusMsg, pct ->
+                        _uiState.update { state ->
+                            state.copy(
+                                postUploadState = state.postUploadState?.copy(
+                                    progress = 10f + (pct * 0.7f),
+                                    secondaryStatus = statusMsg
+                                )
+                            )
+                        }
+                    }
+
+                    if (result != null) {
+                        uploadedUrls.add(result.originalUrl)
+                        uploadedMetaList.add(result.toMediaMetaItem())
+                        if (result.isVideo && primaryVideoUrl == null) {
+                            primaryVideoUrl = result.originalUrl
+                            primaryThumbUrl = result.thumbUrl
+                        }
+                    } else {
+                        // Fallback to local URI if upload failed
+                        uploadedUrls.add(item)
+                    }
+                } else {
+                    // Already an HTTP URL
+                    uploadedUrls.add(item)
+                    val isVid = PostsApiService.isValidVideoUrl(item)
+                    if (isVid) {
+                        isAnyVideo = true
+                        if (primaryVideoUrl == null) primaryVideoUrl = item
+                    }
+                    uploadedMetaList.add(
+                        MediaMetaItem(
+                            original = item,
+                            resolution1080 = item,
+                            resolution720 = item,
+                            feed = item,
+                            full = item,
+                            type = if (isVid) "video" else "image"
+                        )
+                    )
+                }
+            }
+
             _uiState.update { state ->
                 state.copy(
                     postUploadState = state.postUploadState?.copy(
-                        progress = 52f,
-                        secondaryStatus = "Processing content & images..."
+                        progress = 85f,
+                        secondaryStatus = "Finalizing post..."
                     )
                 )
             }
 
+            val finalMediaUrls = if (uploadedUrls.isNotEmpty()) uploadedUrls else allMedia
+            val finalMediaType = if (isAnyVideo) "video" else if (finalMediaUrls.isNotEmpty()) "image" else null
+
             val livePost = PostsApiService.createPost(
                 userId = _uiState.value.currentUser.id,
                 content = content,
-                mediaUrl = allMedia.firstOrNull(),
-                mediaUrls = allMedia,
-                mediaType = if (allMedia.any { it.contains(".mp4") || it.contains("video") }) "video" else if (allMedia.isNotEmpty()) "image" else null,
+                mediaUrl = finalMediaUrls.firstOrNull(),
+                mediaUrls = finalMediaUrls,
+                mediaType = finalMediaType,
+                videoUrl = primaryVideoUrl,
+                thumbnailUrl = primaryThumbUrl,
+                mediaMeta = uploadedMetaList,
                 feeling = feeling,
                 location = location,
                 background = backgroundStyle,
@@ -703,7 +774,13 @@ class FeatheredViewModel : ViewModel() {
 
             // Add post to feed and mark complete
             _uiState.update { state ->
-                val finalPost = livePost ?: newPost
+                val finalPost = livePost ?: newPost.copy(
+                    mediaUrl = finalMediaUrls.firstOrNull(),
+                    mediaUrls = finalMediaUrls,
+                    mediaType = finalMediaType,
+                    videoUrl = primaryVideoUrl,
+                    mediaMeta = uploadedMetaList
+                )
                 state.copy(
                     posts = listOf(finalPost) + state.posts.filter { it.id != newPost.id },
                     postUploadState = state.postUploadState?.copy(

@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.unera.social.data.MockData
+import com.unera.social.data.PostsApiService
 import com.unera.social.model.*
 import com.unera.social.ui.components.*
 
@@ -140,11 +141,9 @@ fun FeedScreen(
                 // Standalone video card: !isGroupPost && !isMarketplace && !isSharedPost && (media_type === 'video' || type === 'video' || post_type === 'video' || post_type === 'reel')
                 val isStandaloneVideo = !isGroupPost && !isMarketplace && !isSharedPost && (
                     post.postType == "video" || post.postType == "reel" ||
-                    (post.mediaType == "video" && !post.videoUrl.isNullOrBlank()) ||
-                    (post.mediaUrls.isEmpty() && post.mediaUrl?.let { url ->
-                        val clean = url.substringBefore("?").substringBefore("#").lowercase()
-                        clean.endsWith(".mp4") || clean.endsWith(".webm") || clean.endsWith(".mov") || clean.endsWith(".m4v")
-                    } == true && post.mediaType == "video")
+                    (post.mediaType == "video" && PostsApiService.isValidVideoUrl(post.videoUrl)) ||
+                    (PostsApiService.isValidVideoUrl(post.videoUrl) && post.mediaUrls.isEmpty()) ||
+                    (post.mediaMeta.firstOrNull()?.type == "video" && PostsApiService.isValidVideoUrl(post.mediaMeta.firstOrNull()?.resolution720 ?: post.mediaMeta.firstOrNull()?.original))
                 )
 
                 if (post.isSponsored || post.postType == "sponsored") {
@@ -1155,8 +1154,10 @@ fun WebPostCard(
             }
 
             // Attached Video or Regular Media Grid (1, 2, 3, 4, 5, 6+ images)
-            val isPostVideo = (post.mediaType == "video" && !post.videoUrl.isNullOrBlank()) ||
-                    (mediaList.size == 1 && (mediaList[0].endsWith(".mp4", true) || mediaList[0].endsWith(".webm", true) || mediaList[0].endsWith(".mov", true) || mediaList[0].endsWith(".m4v", true)))
+            val isPostVideo = PostsApiService.isValidVideoUrl(post.videoUrl) ||
+                    (mediaList.size == 1 && PostsApiService.isValidVideoUrl(mediaList[0])) ||
+                    (post.mediaType == "video" && PostsApiService.isValidVideoUrl(post.mediaUrl)) ||
+                    (post.mediaMeta.firstOrNull()?.type == "video" && PostsApiService.isValidVideoUrl(post.mediaMeta.firstOrNull()?.resolution720 ?: post.mediaMeta.firstOrNull()?.original))
 
             if (post.product == null && post.event == null && post.sharedPost == null && (post.story == null && post.postType != "story")) {
                 if (isPostVideo) {

@@ -665,12 +665,14 @@ fun FeatheredApp(
 
     // Modal Dialogs
     if (uiState.showCreatePostDialog) {
+        val context = androidx.compose.ui.platform.LocalContext.current
         CreatePostModal(
             currentUser = uiState.currentUser,
             allUsers = uiState.users,
             onDismiss = { viewModel.setShowCreatePostDialog(false) },
             onSubmit = { content, mediaUrl, mediaUrls, feeling, location, background, taggedUsers ->
                 viewModel.createPost(
+                    context = context,
                     content = content,
                     mediaUrl = mediaUrl,
                     feeling = feeling,

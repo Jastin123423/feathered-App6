@@ -15,6 +15,27 @@ object PostsApiService {
     private const val BASE_URL = "https://featheredsocial.site"
     private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
+    fun isValidMediaUrl(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        val trimmed = url.trim()
+        if (trimmed == "0" || trimmed == "1" || trimmed == "null" || trimmed == "undefined" || trimmed == "false") return false
+        return trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("content://") || trimmed.startsWith("file://")
+    }
+
+    fun isValidVideoUrl(url: String?): Boolean {
+        if (!isValidMediaUrl(url)) return false
+        val u = url!!.trim().lowercase()
+        return u.endsWith(".mp4") || u.endsWith(".webm") || u.endsWith(".mov") || u.endsWith(".m4v") ||
+                u.endsWith(".mkv") || u.contains("/video/") || u.contains("video_") || u.contains(".mp4?")
+    }
+
+    fun isImageUrl(url: String?): Boolean {
+        if (!isValidMediaUrl(url)) return false
+        val u = url!!.trim().lowercase()
+        return u.endsWith(".jpg") || u.endsWith(".jpeg") || u.endsWith(".png") || u.endsWith(".webp") ||
+                u.endsWith(".gif") || u.contains("/image/") || u.contains("image_") || u.contains(".jpg?")
+    }
+
     /**
      * Fetch feed posts from api/feeds (used when user is logged in)
      */
@@ -187,6 +208,9 @@ object PostsApiService {
         mediaUrl: String? = null,
         mediaUrls: List<String> = emptyList(),
         mediaType: String? = null,
+        videoUrl: String? = null,
+        thumbnailUrl: String? = null,
+        mediaMeta: List<MediaMetaItem> = emptyList(),
         feeling: String? = null,
         location: String? = null,
         background: String? = null,
@@ -196,8 +220,8 @@ object PostsApiService {
             val url = URL("$BASE_URL/api/posts")
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 10000
-                readTimeout = 10000
+                connectTimeout = 15000
+                readTimeout = 15000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("Accept", "application/json")
@@ -213,6 +237,30 @@ object PostsApiService {
                     put("media_urls", JSONArray(mediaUrls))
                 }
                 if (!mediaType.isNullOrBlank()) put("media_type", mediaType)
+                if (!videoUrl.isNullOrBlank()) put("video_url", videoUrl)
+                if (!thumbnailUrl.isNullOrBlank()) {
+                    put("thumbnail_url", thumbnailUrl)
+                    put("thumb_url", thumbnailUrl)
+                }
+                if (mediaMeta.isNotEmpty()) {
+                    val metaArray = JSONArray()
+                    for (item in mediaMeta) {
+                        val mObj = JSONObject().apply {
+                            if (!item.original.isNullOrBlank()) put("original", item.original)
+                            if (!item.resolution1080.isNullOrBlank()) put("1080", item.resolution1080)
+                            if (!item.resolution720.isNullOrBlank()) put("720", item.resolution720)
+                            if (!item.thumbnailUrl.isNullOrBlank()) put("thumb", item.thumbnailUrl)
+                            if (!item.feed.isNullOrBlank()) put("feed", item.feed)
+                            if (!item.full.isNullOrBlank()) put("full", item.full)
+                            if (!item.type.isNullOrBlank()) put("type", item.type)
+                            if (item.width != null) put("width", item.width)
+                            if (item.height != null) put("height", item.height)
+                            if (item.duration != null) put("duration", item.duration)
+                        }
+                        metaArray.put(mObj)
+                    }
+                    put("media_meta", metaArray)
+                }
                 if (!feeling.isNullOrBlank()) put("feeling", feeling)
                 if (!location.isNullOrBlank()) put("location", location)
                 if (!background.isNullOrBlank()) {
@@ -583,35 +631,32 @@ object PostsApiService {
             }
         }
 
-        val feedUrl = obj.optString("feed_url").takeIf { it.isNotBlank() && it != "null" }
-        val fullUrl = obj.optString("full_url").takeIf { it.isNotBlank() && it != "null" }
-        val thumbUrl = obj.optString("thumb_url").takeIf { it.isNotBlank() && it != "null" }
+        val feedUrl = obj.optString("feed_url").takeIf { isValidMediaUrl(it) }
+        val fullUrl = obj.optString("full_url").takeIf { isValidMediaUrl(it) }
+        val thumbUrl = obj.optString("thumb_url").takeIf { isValidMediaUrl(it) }
 
         val mediaTypeRaw = obj.optString("media_type").takeIf { it.isNotBlank() && it != "null" }
         val typeRaw = obj.optString("type").takeIf { it.isNotBlank() && it != "null" }
-        val videoUrlRaw = obj.optString("video_url").takeIf { it.isNotBlank() && it != "null" }
+        val rawVideo = obj.optString("video_url").takeIf { it.isNotBlank() && it != "null" }
             ?: obj.optString("video").takeIf { it.isNotBlank() && it != "null" }
+        val videoUrlRaw = rawVideo?.takeIf { isValidVideoUrl(it) }
 
-        val isVideoExt = mediaUrl?.let { url ->
-            val clean = url.substringBefore("?").substringBefore("#").lowercase()
-            clean.endsWith(".mp4") || clean.endsWith(".webm") || clean.endsWith(".mov") || clean.endsWith(".m4v") || clean.endsWith(".m3u8")
-        } == true
+        val isVideoExt = !mediaUrl.isNullOrBlank() && isValidVideoUrl(mediaUrl)
+        val isImageExt = !mediaUrl.isNullOrBlank() && isImageUrl(mediaUrl)
 
-        val isImageExt = mediaUrl?.let { url ->
-            val clean = url.substringBefore("?").substringBefore("#").lowercase()
-            clean.endsWith(".jpg") || clean.endsWith(".jpeg") || clean.endsWith(".png") || clean.endsWith(".webp") || clean.endsWith(".gif") || clean.endsWith(".heic") || clean.endsWith(".svg")
-        } == true
+        val isGroupPost = (groupId != null && groupId > 0) || source == "group_post" || itemType == "group_post"
 
         // Strict classification matching feeds.ts getFeedItemType:
-        // video: media_type === 'video' OR type === 'video' OR video_url is set OR media_meta[0].type === 'video'
-        val isVideo = !isEvent && !isProduct && !isMusic && (
-            mediaTypeRaw == "video" ||
-            typeRaw == "video" ||
+        // Group posts, marketplace, event, music, story, and share cards are never classified as standalone videos!
+        val isVideo = !isEvent && !isProduct && !isMusic && !isGroupPost && !isStory &&
+                !isProductShare && !isEventShare && !isSongShare && !isStoryShare && (
+            (mediaTypeRaw == "video" && (videoUrlRaw != null || isVideoExt || (!isImageExt && mediaUrls.isEmpty()))) ||
+            (typeRaw == "video" && (videoUrlRaw != null || isVideoExt || (!isImageExt && mediaUrls.isEmpty()))) ||
             postTypeRaw == "video" ||
             postTypeRaw == "reel" ||
             videoUrlRaw != null ||
             (isVideoExt && !isImageExt) ||
-            mediaMeta.firstOrNull()?.type == "video"
+            (mediaMeta.firstOrNull()?.type == "video" && isValidVideoUrl(mediaMeta.firstOrNull()?.resolution720 ?: mediaMeta.firstOrNull()?.original))
         )
 
         val resolvedMediaMeta = if (mediaMeta.isNotEmpty()) {
@@ -633,12 +678,10 @@ object PostsApiService {
         }
 
         val resolvedMediaUrls = if (mediaUrls.isNotEmpty()) {
-            mediaUrls
+            mediaUrls.filter { isValidMediaUrl(it) }
         } else {
-            listOfNotNull(fullUrl, feedUrl, thumbUrl)
+            listOfNotNull(fullUrl, feedUrl, thumbUrl).filter { isValidMediaUrl(it) }
         }
-
-        val isGroupPost = (groupId != null && groupId > 0) || source == "group_post" || itemType == "group_post"
 
         val finalPostType = when {
             isProductShare -> "product_share"
@@ -656,7 +699,7 @@ object PostsApiService {
             else -> "post"
         }
         val finalVideoUrl = videoUrlRaw ?: if (isVideo && isVideoExt) mediaUrl else null
-        val finalMediaType = if (isVideo) "video" else if (mediaTypeRaw != null) mediaTypeRaw else if (resolvedMediaUrls.isNotEmpty()) "image" else null
+        val finalMediaType = if (isVideo) "video" else if (mediaTypeRaw != null && mediaTypeRaw != "video") mediaTypeRaw else if (resolvedMediaUrls.isNotEmpty()) "image" else null
         val myReaction = obj.optString("my_reaction").takeIf { it.isNotBlank() && it != "null" }
         val isLiked = myReaction != null || obj.optBoolean("is_liked", false) || obj.optInt("liked_by_me", 0) == 1
 
@@ -740,30 +783,24 @@ object PostsApiService {
 
         val sharesCount = obj.optInt("shares", obj.optInt("shares_count", 0))
 
-        val feedUrl = obj.optString("feed_url").takeIf { it.isNotBlank() && it != "null" }
-        val fullUrl = obj.optString("full_url").takeIf { it.isNotBlank() && it != "null" }
-        val thumbUrl = obj.optString("thumb_url").takeIf { it.isNotBlank() && it != "null" }
+        val feedUrl = obj.optString("feed_url").takeIf { isValidMediaUrl(it) }
+        val fullUrl = obj.optString("full_url").takeIf { isValidMediaUrl(it) }
+        val thumbUrl = obj.optString("thumb_url").takeIf { isValidMediaUrl(it) }
 
         val mediaTypeRaw = obj.optString("media_type").takeIf { it.isNotBlank() && it != "null" }
         val typeRaw = obj.optString("type").takeIf { it.isNotBlank() && it != "null" }
-        val videoUrlRaw = obj.optString("video_url").takeIf { it.isNotBlank() && it != "null" }
+        val rawVideo = obj.optString("video_url").takeIf { it.isNotBlank() && it != "null" }
             ?: obj.optString("video").takeIf { it.isNotBlank() && it != "null" }
+        val videoUrlRaw = rawVideo?.takeIf { isValidVideoUrl(it) }
 
-        val isVideoExt = mediaUrl?.let { url ->
-            val clean = url.substringBefore("?").substringBefore("#").lowercase()
-            clean.endsWith(".mp4") || clean.endsWith(".webm") || clean.endsWith(".mov") || clean.endsWith(".m4v") || clean.endsWith(".m3u8")
-        } == true
+        val isVideoExt = !mediaUrl.isNullOrBlank() && isValidVideoUrl(mediaUrl)
+        val isImageExt = !mediaUrl.isNullOrBlank() && isImageUrl(mediaUrl)
 
-        val isImageExt = mediaUrl?.let { url ->
-            val clean = url.substringBefore("?").substringBefore("#").lowercase()
-            clean.endsWith(".jpg") || clean.endsWith(".jpeg") || clean.endsWith(".png") || clean.endsWith(".webp") || clean.endsWith(".gif") || clean.endsWith(".heic") || clean.endsWith(".svg")
-        } == true
-
-        val isVideo = mediaTypeRaw == "video" ||
-                typeRaw == "video" ||
-                videoUrlRaw != null ||
+        val isVideo = (videoUrlRaw != null) ||
                 (isVideoExt && !isImageExt) ||
-                mediaMeta.firstOrNull()?.type == "video"
+                (mediaTypeRaw == "video" && (videoUrlRaw != null || isVideoExt || (!isImageExt && mediaUrls.isEmpty()))) ||
+                (typeRaw == "video" && (videoUrlRaw != null || isVideoExt || (!isImageExt && mediaUrls.isEmpty()))) ||
+                (mediaMeta.firstOrNull()?.type == "video" && isValidVideoUrl(mediaMeta.firstOrNull()?.resolution720 ?: mediaMeta.firstOrNull()?.original))
 
         val resolvedMediaMeta = if (mediaMeta.isNotEmpty()) {
             mediaMeta
@@ -784,13 +821,13 @@ object PostsApiService {
         }
 
         val resolvedMediaUrls = if (mediaUrls.isNotEmpty()) {
-            mediaUrls
+            mediaUrls.filter { isValidMediaUrl(it) }
         } else {
-            listOfNotNull(fullUrl, feedUrl, thumbUrl)
+            listOfNotNull(fullUrl, feedUrl, thumbUrl).filter { isValidMediaUrl(it) }
         }
 
         val finalVideoUrl = videoUrlRaw ?: if (isVideo && isVideoExt) mediaUrl else null
-        val finalMediaType = if (isVideo) "video" else if (mediaTypeRaw != null) mediaTypeRaw else if (resolvedMediaUrls.isNotEmpty()) "image" else null
+        val finalMediaType = if (isVideo) "video" else if (mediaTypeRaw != null && mediaTypeRaw != "video") mediaTypeRaw else if (resolvedMediaUrls.isNotEmpty()) "image" else null
 
         return Post(
             id = id,
@@ -822,14 +859,14 @@ object PostsApiService {
         if (mediaObj is JSONArray) {
             for (i in 0 until mediaObj.length()) {
                 val u = mediaObj.optString(i)
-                if (u.isNotBlank() && u != "null") list.add(u)
+                if (isValidMediaUrl(u)) list.add(u)
             }
         } else if (mediaObj is String && mediaObj.startsWith("[")) {
             try {
                 val arr = JSONArray(mediaObj)
                 for (i in 0 until arr.length()) {
                     val u = arr.optString(i)
-                    if (u.isNotBlank() && u != "null") list.add(u)
+                    if (isValidMediaUrl(u)) list.add(u)
                 }
             } catch (_: Exception) {}
         }
@@ -838,19 +875,19 @@ object PostsApiService {
         if (mediaArray != null && list.isEmpty()) {
             for (i in 0 until mediaArray.length()) {
                 val m = mediaArray.optJSONObject(i) ?: continue
-                val u = m.optString("feed").takeIf { it.isNotBlank() && it != "null" }
-                    ?: m.optString("full").takeIf { it.isNotBlank() && it != "null" }
-                    ?: m.optString("original").takeIf { it.isNotBlank() && it != "null" }
-                    ?: m.optString("720").takeIf { it.isNotBlank() && it != "null" }
-                    ?: m.optString("thumb").takeIf { it.isNotBlank() && it != "null" }
+                val u = m.optString("feed").takeIf { isValidMediaUrl(it) }
+                    ?: m.optString("full").takeIf { isValidMediaUrl(it) }
+                    ?: m.optString("original").takeIf { isValidMediaUrl(it) }
+                    ?: m.optString("720").takeIf { isValidMediaUrl(it) }
+                    ?: m.optString("thumb").takeIf { isValidMediaUrl(it) }
                 if (u != null) list.add(u)
             }
         }
 
-        val single = obj.optString("media_url").takeIf { it.isNotBlank() && it != "null" }
-            ?: obj.optString("feed_url").takeIf { it.isNotBlank() && it != "null" }
-            ?: obj.optString("full_url").takeIf { it.isNotBlank() && it != "null" }
-            ?: obj.optString("thumb_url").takeIf { it.isNotBlank() && it != "null" }
+        val single = obj.optString("media_url").takeIf { isValidMediaUrl(it) }
+            ?: obj.optString("feed_url").takeIf { isValidMediaUrl(it) }
+            ?: obj.optString("full_url").takeIf { isValidMediaUrl(it) }
+            ?: obj.optString("thumb_url").takeIf { isValidMediaUrl(it) }
         if (single != null && !list.contains(single)) {
             list.add(0, single)
         }
@@ -926,13 +963,12 @@ object PostsApiService {
 
         // Also fallback to direct feed_url, full_url, thumb_url from feeds.ts
         if (list.isEmpty()) {
-            val feedUrl = obj.optString("feed_url").takeIf { it.isNotBlank() && it != "null" }
-            val fullUrl = obj.optString("full_url").takeIf { it.isNotBlank() && it != "null" }
-            val thumbUrl = obj.optString("thumb_url").takeIf { it.isNotBlank() && it != "null" }
+            val feedUrl = obj.optString("feed_url").takeIf { isValidMediaUrl(it) }
+            val fullUrl = obj.optString("full_url").takeIf { isValidMediaUrl(it) }
+            val thumbUrl = obj.optString("thumb_url").takeIf { isValidMediaUrl(it) }
             if (feedUrl != null || fullUrl != null || thumbUrl != null) {
-                val candidate = (fullUrl ?: feedUrl ?: thumbUrl ?: "").lowercase()
-                val isVid = candidate.endsWith(".mp4") || candidate.endsWith(".webm") || candidate.endsWith(".mov") || candidate.endsWith(".m4v") ||
-                        obj.optString("media_type") == "video" || obj.optString("type") == "video"
+                val candidate = (fullUrl ?: feedUrl ?: thumbUrl ?: "")
+                val isVid = isValidVideoUrl(candidate)
                 list.add(
                     MediaMetaItem(
                         feed = feedUrl,
