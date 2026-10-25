@@ -9,6 +9,7 @@ import com.unera.social.data.MarketplaceApiService
 import com.unera.social.data.MockData
 import com.unera.social.data.PostsApiService
 import com.unera.social.data.StoriesApiService
+import com.unera.social.data.UserApiService
 import com.unera.social.data.VideosApiService
 import android.content.Context
 import android.net.Uri
@@ -28,6 +29,9 @@ data class FeatheredUiState(
     val currentScreen: Screen = Screen.FEED,
     val currentUser: User = MockData.currentUser,
     val users: List<User> = MockData.users,
+    val peopleYouMayKnow: List<User> = emptyList(),
+    val isPymkLoading: Boolean = false,
+    val hiddenPymkIds: Set<Long> = emptySet(),
     val posts: List<Post> = emptyList(),
     val isFeedLoading: Boolean = false,
     val videoPosts: List<Post> = emptyList(),
@@ -192,6 +196,8 @@ class FeatheredViewModel : ViewModel() {
     val uiState: StateFlow<FeatheredUiState> = _uiState.asStateFlow()
 
     init {
+        fetchPeopleYouMayKnow()
+        fetchLiveUsers()
         refreshLiveProducts()
         refreshLiveEvents()
         refreshFeed()
@@ -229,6 +235,8 @@ class FeatheredViewModel : ViewModel() {
     }
 
     fun refreshFeed() {
+        fetchPeopleYouMayKnow()
+        fetchLiveUsers()
         viewModelScope.launch {
             _uiState.update { it.copy(isFeedLoading = true) }
             val isUserLoggedIn = _uiState.value.isLoggedIn && !_uiState.value.isGuest
@@ -287,6 +295,43 @@ class FeatheredViewModel : ViewModel() {
         }
     }
 
+    fun fetchPeopleYouMayKnow() {
+        viewModelScope.launch {
+            val currentUid = if (_uiState.value.isLoggedIn && !_uiState.value.isGuest) _uiState.value.currentUser.id else 1L
+            _uiState.update { it.copy(isPymkLoading = true) }
+            val suggestions = UserApiService.fetchSuggestions(currentUid, limit = 20)
+            val hidden = _uiState.value.hiddenPymkIds
+            val filtered = suggestions.filter { it.id != currentUid && !hidden.contains(it.id) }
+            _uiState.update { state ->
+                state.copy(
+                    peopleYouMayKnow = filtered,
+                    isPymkLoading = false
+                )
+            }
+        }
+    }
+
+    fun fetchLiveUsers() {
+        viewModelScope.launch {
+            val liveUsers = UserApiService.fetchLiveUsers(limit = 50)
+            if (liveUsers.isNotEmpty()) {
+                _uiState.update { state ->
+                    val allCombined = (listOf(state.currentUser) + liveUsers).distinctBy { it.id }
+                    state.copy(users = allCombined)
+                }
+            }
+        }
+    }
+
+    fun dismissPymk(userId: Long) {
+        _uiState.update { state ->
+            state.copy(
+                hiddenPymkIds = state.hiddenPymkIds + userId,
+                peopleYouMayKnow = state.peopleYouMayKnow.filter { it.id != userId }
+            )
+        }
+    }
+
     fun setScreen(screen: Screen) {
         _uiState.update {
             it.copy(
@@ -298,6 +343,9 @@ class FeatheredViewModel : ViewModel() {
             refreshLiveProducts()
         } else if (screen == Screen.EVENTS) {
             refreshLiveEvents()
+        } else if (screen == Screen.DISCOVER_PEOPLE) {
+            fetchPeopleYouMayKnow()
+            fetchLiveUsers()
         } else if (screen == Screen.FEED) {
             refreshFeed()
             refreshStories()
@@ -509,18 +557,33 @@ class FeatheredViewModel : ViewModel() {
     }
 
     fun toggleFollowUser(userId: Long) {
+        val currentUid = _uiState.value.currentUser.id
+        var newFollowState = false
         _uiState.update { state ->
             val updatedUsers = state.users.map { user ->
                 if (user.id == userId) {
                     val newFollowing = !user.isFollowing
+                    newFollowState = newFollowing
                     val newCount = if (newFollowing) user.followersCount + 1 else (user.followersCount - 1).coerceAtLeast(0)
                     user.copy(isFollowing = newFollowing, followersCount = newCount)
                 } else user
             }
-            state.copy(users = updatedUsers)
+            val updatedPymk = state.peopleYouMayKnow.map { user ->
+                if (user.id == userId) {
+                    val newFollowing = !user.isFollowing
+                    newFollowState = newFollowing
+                    val newCount = if (newFollowing) user.followersCount + 1 else (user.followersCount - 1).coerceAtLeast(0)
+                    user.copy(isFollowing = newFollowing, followersCount = newCount)
+                } else user
+            }
+            state.copy(users = updatedUsers, peopleYouMayKnow = updatedPymk)
         }
         viewModelScope.launch {
-            VideosApiService.followUser(_uiState.value.currentUser.id, userId)
+            if (newFollowState) {
+                UserApiService.followUser(currentUid, userId)
+            } else {
+                UserApiService.unfollowUser(currentUid, userId)
+            }
         }
     }
 

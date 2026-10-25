@@ -256,6 +256,10 @@ fun FeatheredApp(
                         stories = uiState.stories,
                         posts = uiState.posts,
                         allUsers = uiState.users,
+                        peopleYouMayKnow = uiState.peopleYouMayKnow,
+                        onFollowFromPymk = { viewModel.toggleFollowUser(it) },
+                        onDismissPymk = { viewModel.dismissPymk(it) },
+                        pymkLoading = uiState.isPymkLoading,
                         groups = uiState.groups,
                         isFeedLoading = uiState.isFeedLoading,
                         onRefresh = { viewModel.refreshFeed() },
@@ -419,10 +423,11 @@ fun FeatheredApp(
                 Screen.DISCOVER_PEOPLE -> {
                     SuggestedProfilesPage(
                         currentUser = uiState.currentUser,
-                        users = uiState.users,
+                        users = (uiState.peopleYouMayKnow + uiState.users).distinctBy { it.id },
                         onFollow = { viewModel.toggleFollowUser(it) },
                         onProfileClick = { userId ->
                             val targetUser = uiState.users.find { it.id == userId }
+                                ?: uiState.peopleYouMayKnow.find { it.id == userId }
                             if (targetUser != null) {
                                 viewModel.openUserProfile(targetUser)
                             }

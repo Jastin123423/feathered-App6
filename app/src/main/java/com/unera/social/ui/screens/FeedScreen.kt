@@ -54,6 +54,10 @@ fun FeedScreen(
     onUserClick: (User) -> Unit,
     onAddStoryClick: () -> Unit = onOpenCreatePost,
     allUsers: List<User> = emptyList(),
+    peopleYouMayKnow: List<User> = emptyList(),
+    onFollowFromPymk: ((Long) -> Unit)? = null,
+    onDismissPymk: ((Long) -> Unit)? = null,
+    pymkLoading: Boolean = false,
     groups: List<Group> = emptyList(),
     isFeedLoading: Boolean = false,
     onRefresh: (() -> Unit)? = null,
@@ -230,15 +234,27 @@ fun FeedScreen(
                         .background(Color(0xFF050B18))
                 )
 
-                // Interleaved Widget 1: People You May Know after 2nd post
-                if (index == 1 && allUsers.isNotEmpty()) {
+                // Interleaved Widget 1: People You May Know
+                val effectivePymk = if (peopleYouMayKnow.isNotEmpty()) peopleYouMayKnow else allUsers.filter { it.id != currentUser.id }
+                val pymkInsertIndex1 = when {
+                    posts.size < 6 -> if (posts.isNotEmpty()) (posts.size - 1).coerceAtMost(1) else -1
+                    posts.size <= 10 -> posts.size - 1
+                    else -> 7
+                }
+                val pymkInsertIndex2 = if (posts.size >= 22) 21 else -1
+
+                if ((index == pymkInsertIndex1 || index == pymkInsertIndex2) && effectivePymk.isNotEmpty()) {
                     PeopleYouMayKnowSection(
                         currentUser = currentUser,
-                        allUsers = allUsers.filter { it.id != currentUser.id },
+                        allUsers = effectivePymk,
                         followStates = followStates,
                         onFollowToggle = { uid ->
                             val current = followStates[uid] ?: false
                             followStates = followStates + (uid to !current)
+                            onFollowFromPymk?.invoke(uid)
+                        },
+                        onDismiss = { uid ->
+                            onDismissPymk?.invoke(uid)
                         },
                         onUserClick = onUserClick
                     )
@@ -2732,8 +2748,9 @@ fun SharedPostNestedCard(
 fun PeopleYouMayKnowSection(
     currentUser: User,
     allUsers: List<User>,
-    followStates: Map<Long, Boolean>,
+    followStates: Map<Long, Boolean> = emptyMap(),
     onFollowToggle: (Long) -> Unit,
+    onDismiss: ((Long) -> Unit)? = null,
     onUserClick: (User) -> Unit
 ) {
     Column(
@@ -2774,16 +2791,39 @@ fun PeopleYouMayKnowSection(
                     Column(
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        // Square profile photo
-                        AsyncImage(
-                            model = user.profileImageUrl,
-                            contentDescription = user.name,
-                            contentScale = ContentScale.Crop,
+                        // Square profile photo with optional dismiss button
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(150.dp)
-                                .clickable { onUserClick(user) }
-                        )
+                        ) {
+                            AsyncImage(
+                                model = user.profileImageUrl,
+                                contentDescription = user.name,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clickable { onUserClick(user) }
+                            )
+
+                            if (onDismiss != null) {
+                                IconButton(
+                                    onClick = { onDismiss(user.id) },
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(6.dp)
+                                        .size(26.dp)
+                                        .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remove",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
+                        }
 
                         Column(
                             modifier = Modifier.padding(10.dp)
