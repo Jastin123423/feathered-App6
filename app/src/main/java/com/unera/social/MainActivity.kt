@@ -716,10 +716,12 @@ fun FeatheredApp(
     }
 
     if (uiState.showCreateProductDialog) {
+        val context = androidx.compose.ui.platform.LocalContext.current
         CreateProductDialog(
             onDismiss = { viewModel.setShowCreateProductDialog(false) },
             onSubmit = { title, price, discountPrice, category, location, country, description, imageUrl, images, phone ->
                 viewModel.createProduct(
+                    context = context,
                     title = title,
                     price = price,
                     discountPrice = discountPrice,
@@ -736,11 +738,13 @@ fun FeatheredApp(
     }
 
     if (uiState.showCreateEventDialog) {
+        val context = androidx.compose.ui.platform.LocalContext.current
         CreateEventModal(
             currentUser = uiState.currentUser,
             onClose = { viewModel.setShowCreateEventDialog(false) },
             onCreate = { title, desc, date, time, location, visibility, coverUrl, gId, gName ->
                 viewModel.createEvent(
+                    context = context,
                     title = title,
                     date = if (time.isNotBlank()) "$date • $time" else date,
                     location = location,

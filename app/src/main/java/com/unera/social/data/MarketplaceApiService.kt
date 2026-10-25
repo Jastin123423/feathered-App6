@@ -201,12 +201,18 @@ object MarketplaceApiService {
 
             val json = JSONObject().apply {
                 put("seller_id", product.seller.id)
-                put("title", product.title)
+                put("seller_name", product.seller.name)
+                put("seller_avatar", product.seller.profileImageUrl)
+                put("title", product.title.trim())
                 put("category", product.category.lowercase().replace(" ", "_"))
-                put("description", product.description)
+                put("description", product.description.trim())
                 put("country", product.country)
-                put("address", product.location)
+                put("address", product.location.trim())
+                put("location", product.location.trim())
                 put("main_price", product.price)
+                put("price", product.price)
+                put("currency", product.currency)
+                put("currency_symbol", product.currency)
                 if (product.discountPrice != null && product.discountPrice > 0) {
                     put("discount_price", product.discountPrice)
                 } else {

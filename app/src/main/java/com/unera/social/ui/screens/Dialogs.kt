@@ -1621,6 +1621,14 @@ fun CreateProductDialog(
     var imagesList by remember { mutableStateOf(listOf<String>()) }
     var isPublishing by remember { mutableStateOf(false) }
 
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            imagesList = (imagesList + uris.map { it.toString() }).take(10)
+        }
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
@@ -1719,16 +1727,9 @@ fun CreateProductDialog(
                         // Add photo card
                         Surface(
                             onClick = {
-                                // Add quick photo or prompt
-                                val samplePhotos = listOf(
-                                    "https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?w=800",
-                                    "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800",
-                                    "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800"
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                                 )
-                                if (imagesList.size < 10) {
-                                    val nextPhoto = samplePhotos[imagesList.size % samplePhotos.size]
-                                    imagesList = imagesList + nextPhoto
-                                }
                             },
                             shape = RoundedCornerShape(16.dp),
                             color = Color(0xFF0F172A),

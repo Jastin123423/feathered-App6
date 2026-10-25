@@ -2,6 +2,7 @@ package com.unera.social.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.unera.social.data.EventsApiService
 import com.unera.social.data.GroupsApiService
 import com.unera.social.data.GroupMemberInfo
 import com.unera.social.data.MarketplaceApiService
@@ -192,6 +193,7 @@ class FeatheredViewModel : ViewModel() {
 
     init {
         refreshLiveProducts()
+        refreshLiveEvents()
         refreshFeed()
         refreshGroups()
         refreshStories()
@@ -273,6 +275,18 @@ class FeatheredViewModel : ViewModel() {
         }
     }
 
+    fun refreshLiveEvents() {
+        viewModelScope.launch {
+            val uid = if (_uiState.value.isLoggedIn && !_uiState.value.isGuest) _uiState.value.currentUser.id else null
+            val liveEvents = EventsApiService.fetchLiveEvents(uid)
+            if (liveEvents.isNotEmpty()) {
+                _uiState.update { state ->
+                    state.copy(events = liveEvents)
+                }
+            }
+        }
+    }
+
     fun setScreen(screen: Screen) {
         _uiState.update {
             it.copy(
@@ -282,6 +296,8 @@ class FeatheredViewModel : ViewModel() {
         }
         if (screen == Screen.MARKETPLACE) {
             refreshLiveProducts()
+        } else if (screen == Screen.EVENTS) {
+            refreshLiveEvents()
         } else if (screen == Screen.FEED) {
             refreshFeed()
             refreshStories()
@@ -1098,6 +1114,7 @@ class FeatheredViewModel : ViewModel() {
     }
 
     fun createProduct(
+        context: Context? = null,
         title: String,
         price: Double,
         discountPrice: Double? = null,
@@ -1109,61 +1126,148 @@ class FeatheredViewModel : ViewModel() {
         images: List<String> = emptyList(),
         phone: String = ""
     ) {
-        val allImages = if (images.isNotEmpty()) images else if (imageUrl.isNotBlank()) listOf(imageUrl) else listOf("https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?w=800")
-        val newProduct = Product(
-            id = System.currentTimeMillis(),
-            title = title,
-            price = price,
-            discountPrice = discountPrice,
-            category = category,
-            location = location,
-            country = country,
-            currency = if (country.equals("TZ", ignoreCase = true)) "TZS" else "USD",
-            imageUrl = allImages.first(),
-            images = allImages,
-            description = description,
-            seller = _uiState.value.currentUser,
-            phoneNumber = phone.ifBlank { "+255 712 345 678" },
-            isFresh = true
-        )
+        val initialImages = if (images.isNotEmpty()) images else if (imageUrl.isNotBlank()) listOf(imageUrl) else listOf("https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?w=800")
+        val productTitle = title.trim().ifBlank { "Product" }
 
-        // Optimistic Feed Bridge Post (Section 6)
-        val feedPost = Post(
-            id = newProduct.id,
-            author = _uiState.value.currentUser,
-            content = description,
-            mediaUrl = newProduct.imageUrl,
-            mediaUrls = newProduct.images,
-            timestamp = "Just now",
-            postType = "product",
-            product = newProduct
-        )
-
+        // 1. Initial State: 20% progress banner
         _uiState.update { state ->
-            val userProfilePosts = state.userProfilePosts.toMutableMap()
-            val myPosts = userProfilePosts[state.currentUser.id] ?: emptyList()
-            userProfilePosts[state.currentUser.id] = listOf(feedPost) + myPosts
             state.copy(
-                products = listOf(newProduct) + state.products,
-                posts = listOf(feedPost) + state.posts,
-                userProfilePosts = userProfilePosts,
-                showCreateProductDialog = false
+                showCreateProductDialog = false,
+                postUploadState = PostUploadState(
+                    isUploading = true,
+                    progress = 20f,
+                    title = "Publishing \"$productTitle\"…",
+                    secondaryStatus = "Preparing product details...",
+                    previewUrl = initialImages.firstOrNull(),
+                    isSuccess = false
+                )
             )
         }
 
-        // Asynchronously post to live API and schedule silent refresh
         viewModelScope.launch {
-            val published = MarketplaceApiService.publishProduct(newProduct)
-            if (published != null && published.id != newProduct.id) {
+            try {
+                // 2. Upload any local image content uris to Cloudflare R2
+                val finalUploadedImages = mutableListOf<String>()
+                for ((index, img) in initialImages.withIndex()) {
+                    if ((img.startsWith("content://") || img.startsWith("file://")) && context != null) {
+                        _uiState.update { state ->
+                            state.copy(
+                                postUploadState = state.postUploadState?.copy(
+                                    progress = 30f + ((index + 1).toFloat() / initialImages.size * 25f),
+                                    secondaryStatus = "Uploading product photo ${index + 1} of ${initialImages.size}..."
+                                )
+                            )
+                        }
+                        val bundle = try {
+                            MediaUploadHelper.buildImageBundleAndUpload(context, Uri.parse(img))
+                        } catch (e: Exception) {
+                            null
+                        }
+                        if (bundle != null && bundle.feedUrl.isNotBlank()) {
+                            finalUploadedImages.add(bundle.feedUrl)
+                        } else {
+                            finalUploadedImages.add(img)
+                        }
+                    } else {
+                        finalUploadedImages.add(img)
+                    }
+                }
+
+                val primaryImage = finalUploadedImages.firstOrNull() ?: "https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?w=800"
+
+                // 3. Registering with Marketplace API
                 _uiState.update { state ->
                     state.copy(
-                        products = state.products.map { if (it.id == newProduct.id) published else it },
-                        posts = state.posts.map { if (it.id == newProduct.id) it.copy(id = published.id, product = published) else it }
+                        postUploadState = state.postUploadState?.copy(
+                            progress = 65f,
+                            secondaryStatus = "Registering product in Marketplace..."
+                        )
                     )
                 }
+
+                val productToSend = Product(
+                    id = System.currentTimeMillis(),
+                    title = productTitle,
+                    price = price,
+                    discountPrice = discountPrice,
+                    category = category,
+                    location = location.trim(),
+                    country = country,
+                    currency = if (country.equals("TZ", ignoreCase = true)) "TZS" else "USD",
+                    imageUrl = primaryImage,
+                    images = finalUploadedImages,
+                    description = description.trim(),
+                    seller = _uiState.value.currentUser,
+                    phoneNumber = phone.ifBlank { "+255 712 345 678" },
+                    isFresh = true
+                )
+
+                val published = MarketplaceApiService.publishProduct(productToSend)
+                val finalProduct = published ?: productToSend
+
+                // 4. Inject into local state
+                _uiState.update { state ->
+                    state.copy(
+                        postUploadState = state.postUploadState?.copy(
+                            progress = 85f,
+                            secondaryStatus = "Displaying product in feed & marketplace..."
+                        )
+                    )
+                }
+
+                val feedPost = Post(
+                    id = finalProduct.id,
+                    author = _uiState.value.currentUser,
+                    content = finalProduct.description,
+                    mediaUrl = finalProduct.imageUrl,
+                    mediaUrls = finalProduct.images,
+                    timestamp = "Just now",
+                    postType = "product",
+                    product = finalProduct
+                )
+
+                _uiState.update { state ->
+                    val userProfilePosts = state.userProfilePosts.toMutableMap()
+                    val myPosts = userProfilePosts[state.currentUser.id] ?: emptyList()
+                    userProfilePosts[state.currentUser.id] = listOf(feedPost) + myPosts
+                    state.copy(
+                        products = listOf(finalProduct) + state.products.filter { it.id != finalProduct.id },
+                        posts = listOf(feedPost) + state.posts.filter { it.id != feedPost.id },
+                        userProfilePosts = userProfilePosts
+                    )
+                }
+
+                // 5. Success
+                _uiState.update { state ->
+                    state.copy(
+                        postUploadState = state.postUploadState?.copy(
+                            isUploading = false,
+                            isSuccess = true,
+                            progress = 100f,
+                            title = "Listing published!",
+                            secondaryStatus = "Your product is now live in the marketplace."
+                        )
+                    )
+                }
+
+                delay(2800)
+                _uiState.update { it.copy(postUploadState = null) }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _uiState.update { state ->
+                    state.copy(
+                        postUploadState = state.postUploadState?.copy(
+                            isUploading = false,
+                            isSuccess = false,
+                            progress = 0f,
+                            title = "Failed to publish listing",
+                            secondaryStatus = e.message ?: "Something went wrong. Please try again."
+                        )
+                    )
+                }
+                delay(3500)
+                _uiState.update { it.copy(postUploadState = null) }
             }
-            delay(3000)
-            refreshFeed()
         }
     }
 
@@ -1196,6 +1300,7 @@ class FeatheredViewModel : ViewModel() {
     }
 
     fun createEvent(
+        context: Context? = null,
         title: String,
         date: String,
         location: String,
@@ -1206,25 +1311,161 @@ class FeatheredViewModel : ViewModel() {
         groupId: Long? = null,
         groupName: String? = null
     ) {
-        val newEvent = Event(
-            id = System.currentTimeMillis(),
-            title = title,
-            date = date,
-            location = location,
-            description = description,
-            imageUrl = imageUrl.ifBlank { "https://images.unsplash.com/photo-1511795409834-ef04bbd61622?w=800" },
-            organizer = _uiState.value.currentUser,
-            time = time,
-            visibility = visibility,
-            groupId = groupId,
-            groupName = groupName,
-            createdAt = "Just now"
-        )
+        val eventTitle = title.trim().ifBlank { "Event" }
+        val rawCover = imageUrl.trim().ifBlank { "https://images.unsplash.com/photo-1501281668745-f7f57925c3b4?w=800" }
+
+        // 1. Initial State: 20% progress banner
         _uiState.update { state ->
             state.copy(
-                events = listOf(newEvent) + state.events,
-                showCreateEventDialog = false
+                showCreateEventDialog = false,
+                postUploadState = PostUploadState(
+                    isUploading = true,
+                    progress = 20f,
+                    title = "Publishing \"$eventTitle\"…",
+                    secondaryStatus = "Preparing event details...",
+                    previewUrl = rawCover,
+                    isSuccess = false
+                )
             )
+        }
+
+        viewModelScope.launch {
+            try {
+                // 2. Upload cover if local uri
+                var finalCover = rawCover
+                if ((rawCover.startsWith("content://") || rawCover.startsWith("file://")) && context != null) {
+                    _uiState.update { state ->
+                        state.copy(
+                            postUploadState = state.postUploadState?.copy(
+                                progress = 40f,
+                                secondaryStatus = "Uploading event cover image..."
+                            )
+                        )
+                    }
+                    val bundle = try {
+                        MediaUploadHelper.buildImageBundleAndUpload(context, Uri.parse(rawCover))
+                    } catch (e: Exception) {
+                        null
+                    }
+                    if (bundle != null && bundle.feedUrl.isNotBlank()) {
+                        finalCover = bundle.feedUrl
+                    }
+                }
+
+                // Format ISO date
+                val d = date.substringBefore(" • ").trim()
+                val t = time.ifBlank { "12:00" }
+                val eventDateISO = try {
+                    if (d.matches(Regex("""\d{4}-\d{2}-\d{2}"""))) {
+                        "${d}T${t}:00.000Z"
+                    } else {
+                        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+                            timeZone = java.util.TimeZone.getTimeZone("UTC")
+                        }
+                        sdf.format(java.util.Date())
+                    }
+                } catch (_: Exception) {
+                    "${d}T12:00:00.000Z"
+                }
+
+                // 3. Register with API
+                _uiState.update { state ->
+                    state.copy(
+                        postUploadState = state.postUploadState?.copy(
+                            progress = 55f,
+                            secondaryStatus = "Registering event with Feathered..."
+                        )
+                    )
+                }
+
+                val currentUser = _uiState.value.currentUser
+                val createdEvent = EventsApiService.createEvent(
+                    title = eventTitle,
+                    description = description.trim(),
+                    eventDateISO = eventDateISO,
+                    eventTime = t,
+                    location = location.trim(),
+                    visibility = visibility.ifBlank { "worldwide" },
+                    coverUrl = finalCover,
+                    creator = currentUser,
+                    groupId = groupId
+                )
+
+                val newEvent = createdEvent ?: Event(
+                    id = System.currentTimeMillis(),
+                    title = eventTitle,
+                    date = date,
+                    location = location.trim(),
+                    description = description.trim(),
+                    imageUrl = finalCover,
+                    organizer = currentUser,
+                    time = t,
+                    visibility = visibility,
+                    groupId = groupId,
+                    groupName = groupName,
+                    createdAt = "Just now"
+                )
+
+                // 4. Inject into feed & events state
+                _uiState.update { state ->
+                    state.copy(
+                        postUploadState = state.postUploadState?.copy(
+                            progress = 85f,
+                            secondaryStatus = "Displaying event in feed..."
+                        )
+                    )
+                }
+
+                // In web App.tsx, Events are stored in events table and a feed post is injected locally:
+                val eventFeedPost = Post(
+                    id = newEvent.id,
+                    author = currentUser,
+                    content = newEvent.title,
+                    mediaUrl = newEvent.imageUrl,
+                    mediaUrls = if (newEvent.imageUrl.isNotBlank()) listOf(newEvent.imageUrl) else emptyList(),
+                    timestamp = "Just now",
+                    postType = "event",
+                    event = newEvent
+                )
+
+                _uiState.update { state ->
+                    state.copy(
+                        events = listOf(newEvent) + state.events.filter { it.id != newEvent.id },
+                        posts = listOf(eventFeedPost) + state.posts.filter { it.id != eventFeedPost.id }
+                    )
+                }
+
+                // 5. Success
+                _uiState.update { state ->
+                    state.copy(
+                        postUploadState = state.postUploadState?.copy(
+                            isUploading = false,
+                            isSuccess = true,
+                            progress = 100f,
+                            title = "Event published!",
+                            secondaryStatus = "Your event is now live for attendees."
+                        )
+                    )
+                }
+
+                delay(2800)
+                _uiState.update { it.copy(postUploadState = null) }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _uiState.update { state ->
+                    state.copy(
+                        postUploadState = state.postUploadState?.copy(
+                            isUploading = false,
+                            isSuccess = false,
+                            progress = 0f,
+                            title = "Failed to create event",
+                            secondaryStatus = e.message ?: "Something went wrong. Please try again."
+                        )
+                    )
+                }
+                delay(3500)
+                _uiState.update { it.copy(postUploadState = null) }
+            }
         }
     }
 
