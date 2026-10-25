@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import com.unera.social.data.PostsApiService
 import com.unera.social.model.*
 import com.unera.social.ui.theme.*
 
@@ -72,6 +73,7 @@ fun ProfileScreen(
     onCommentPost: (Post) -> Unit = {},
     onSavePost: (Long) -> Unit = {},
     onSharePost: (Long) -> Unit = {},
+    onOpenProduct: (Product) -> Unit = {},
     onUpdateUserDetails: (bio: String, work: String, education: String, location: String, website: String) -> Unit = { _, _, _, _, _ -> },
     onFollowUser: (Long) -> Unit = {},
     onProfileClick: (User) -> Unit = {},
@@ -108,7 +110,43 @@ fun ProfileScreen(
     val userReels = remember(allReels, user.id) {
         allReels.filter { it.author.id == user.id }
     }
-    val isFollowing = remember(user.isFollowing, user.id) { user.isFollowing }
+    val userProducts = remember(allProducts, user.id) {
+        allProducts.filter { it.seller.id == user.id }
+    }
+    val userVideoPosts = remember(userPosts, userReels) {
+        val fromPosts = userPosts.filter { post ->
+            post.postType == "video" || post.postType == "reel" ||
+            post.mediaType == "video" ||
+            !post.videoUrl.isNullOrBlank() ||
+            (post.mediaUrl?.let { PostsApiService.isValidVideoUrl(it) } == true)
+        }
+        val fromReels = userReels.map { reel ->
+            Post(
+                id = reel.id,
+                author = reel.author,
+                content = reel.caption,
+                videoUrl = reel.videoUrl,
+                mediaUrl = reel.videoUrl,
+                mediaType = "video",
+                postType = "video",
+                createdAt = "Recently",
+                likesCount = reel.likesCount,
+                commentsCount = reel.commentsCount,
+                sharesCount = reel.sharesCount,
+                isLiked = reel.isLiked,
+                isSaved = reel.isSaved
+            )
+        }.filter { reelPost -> fromPosts.none { it.id == reelPost.id } }
+        fromPosts + fromReels
+    }
+    val availableTabs = remember(userProducts) {
+        if (userProducts.isNotEmpty()) {
+            listOf("Posts", "Videos", "Photos", "Shop", "About", "Followers")
+        } else {
+            listOf("Posts", "Videos", "Photos", "About", "Followers")
+        }
+    }
+    val isFollowing = user.isFollowing
 
     LaunchedEffect(toastMessage) {
         if (toastMessage != null) {
@@ -496,7 +534,7 @@ fun ProfileScreen(
                         }
                     }
 
-                    // Followers / Posts count row
+                    // Followers / Following / Posts count row
                     Row(
                         modifier = Modifier.padding(top = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -509,6 +547,22 @@ fun ProfileScreen(
                         )
                         Text(
                             text = " followers",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 15.sp
+                        )
+                        Text(
+                            text = "  ·  ",
+                            color = Color(0xFF64748B),
+                            fontSize = 15.sp
+                        )
+                        Text(
+                            text = "${user.followingCount}",
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFF8FAFC),
+                            fontSize = 15.sp
+                        )
+                        Text(
+                            text = " following",
                             color = Color(0xFF94A3B8),
                             fontSize = 15.sp
                         )
@@ -749,22 +803,15 @@ fun ProfileScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Horizontal Navigation Tabs (Posts, Videos, Photos, About, Followers)
+                    // Horizontal Navigation Tabs (Posts, Videos, Photos, Shop, About, Followers)
                     ScrollableTabRow(
-                        selectedTabIndex = when (selectedTab) {
-                            "Posts" -> 0
-                            "Videos" -> 1
-                            "Photos" -> 2
-                            "About" -> 3
-                            "Followers" -> 4
-                            else -> 0
-                        },
+                        selectedTabIndex = availableTabs.indexOf(selectedTab).coerceAtLeast(0),
                         containerColor = Color(0xFF0F172A),
                         contentColor = Color(0xFF1877F2),
                         edgePadding = 0.dp,
                         divider = { HorizontalDivider(color = Color(0xFF1E293B)) }
                     ) {
-                        listOf("Posts", "Videos", "Photos", "About", "Followers").forEach { tab ->
+                        availableTabs.forEach { tab ->
                             Tab(
                                 selected = selectedTab == tab,
                                 onClick = { selectedTab = tab },
@@ -800,10 +847,13 @@ fun ProfileScreen(
                             PostCard(
                                 post = post,
                                 currentUser = currentUser,
+                                isFollowing = isFollowing,
+                                onFollowToggle = { onFollowUser(user.id) },
                                 onLike = { onLikePost(post.id) },
                                 onComment = { onCommentPost(post) },
                                 onSave = { onSavePost(post.id) },
                                 onShare = { onSharePost(post.id) },
+                                onOpenProduct = onOpenProduct,
                                 onDeletePost = onDeletePost,
                                 onEditPost = onEditPost,
                                 onUserClick = {}
@@ -814,19 +864,49 @@ fun ProfileScreen(
                 }
 
                 "Videos" -> {
-                    if (userReels.isEmpty() && userPosts.none { it.mediaUrl?.endsWith(".mp4") == true }) {
+                    if (userVideoPosts.isEmpty()) {
                         item {
                             EmptyStateView(
                                 icon = Icons.Filled.VideoLibrary,
                                 title = "No videos yet",
-                                subtitle = if (isMe) "Upload short reels or video posts!" else "${user.name} hasn't uploaded any videos yet."
+                                subtitle = if (isMe) "Share short reels or video posts!" else "${user.name} hasn't uploaded any videos yet."
+                            )
+                        }
+                    } else {
+                        items(userVideoPosts, key = { it.id }) { post ->
+                            PostCard(
+                                post = post,
+                                currentUser = currentUser,
+                                isFollowing = isFollowing,
+                                onFollowToggle = { onFollowUser(user.id) },
+                                onLike = { onLikePost(post.id) },
+                                onComment = { onCommentPost(post) },
+                                onSave = { onSavePost(post.id) },
+                                onShare = { onSharePost(post.id) },
+                                onOpenProduct = onOpenProduct,
+                                onDeletePost = onDeletePost,
+                                onEditPost = onEditPost,
+                                onUserClick = {}
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+                }
+
+                "Shop" -> {
+                    if (userProducts.isEmpty()) {
+                        item {
+                            EmptyStateView(
+                                icon = Icons.Filled.ShoppingBag,
+                                title = "No products listed",
+                                subtitle = if (isMe) "List items for sale on MarketPoint!" else "${user.name} hasn't listed any items for sale."
                             )
                         }
                     } else {
                         item {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Text(
-                                    text = "Videos & Reels (${userReels.size})",
+                                    text = "Products (${userProducts.size})",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 17.sp,
                                     color = Color(0xFFF8FAFC),
@@ -841,56 +921,46 @@ fun ProfileScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    items(userReels) { reel ->
-                                        Box(
+                                    items(userProducts, key = { it.id }) { product ->
+                                        Card(
+                                            shape = RoundedCornerShape(8.dp),
+                                            colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1E293B)),
                                             modifier = Modifier
-                                                .aspectRatio(9f / 16f)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(Color.Black)
+                                                .fillMaxWidth()
+                                                .clickable { onOpenProduct(product) }
                                         ) {
-                                            AsyncImage(
-                                                model = reel.videoUrl,
-                                                contentDescription = reel.caption,
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .background(
-                                                        Brush.verticalGradient(
-                                                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f)),
-                                                            startY = 100f
-                                                        )
-                                                    )
-                                            )
-                                            // Play icon center
-                                            Box(
-                                                modifier = Modifier
-                                                    .align(Alignment.Center)
-                                                    .size(42.dp)
-                                                    .clip(CircleShape)
-                                                    .background(Color.Black.copy(alpha = 0.5f))
-                                                    .border(1.dp, Color.White.copy(alpha = 0.6f), CircleShape),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Filled.PlayArrow,
-                                                    contentDescription = null,
-                                                    tint = Color.White,
-                                                    modifier = Modifier.size(24.dp)
+                                            Column {
+                                                AsyncImage(
+                                                    model = product.imageUrl,
+                                                    contentDescription = product.title,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .aspectRatio(1f)
                                                 )
-                                            }
-                                            // Views badge
-                                            Row(
-                                                modifier = Modifier
-                                                    .align(Alignment.BottomStart)
-                                                    .padding(8.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Icon(Icons.Filled.Visibility, null, tint = Color.White, modifier = Modifier.size(12.dp))
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Text("${reel.likesCount * 3 + 120} views", color = Color.White, fontSize = 11.sp)
+                                                Column(modifier = Modifier.padding(8.dp)) {
+                                                    Text(
+                                                        text = "${product.currency} ${String.format("%,.0f", product.price)}",
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF38BDF8),
+                                                        fontSize = 14.sp
+                                                    )
+                                                    Text(
+                                                        text = product.title,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = Color(0xFFF8FAFC),
+                                                        fontSize = 13.sp,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Text(
+                                                        text = product.location,
+                                                        color = Color(0xFF94A3B8),
+                                                        fontSize = 11.sp,
+                                                        maxLines = 1
+                                                    )
+                                                }
                                             }
                                         }
                                     }

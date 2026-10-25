@@ -558,6 +558,7 @@ class FeatheredViewModel : ViewModel() {
 
     fun toggleFollowUser(userId: Long) {
         val currentUid = _uiState.value.currentUser.id
+        if (userId <= 0L || userId == currentUid) return
         var newFollowState = false
         _uiState.update { state ->
             val updatedUsers = state.users.map { user ->
@@ -576,13 +577,76 @@ class FeatheredViewModel : ViewModel() {
                     user.copy(isFollowing = newFollowing, followersCount = newCount)
                 } else user
             }
-            state.copy(users = updatedUsers, peopleYouMayKnow = updatedPymk)
+            val updatedSelectedProfile = if (state.selectedUserProfile?.id == userId) {
+                val newFollowing = !state.selectedUserProfile.isFollowing
+                val newCount = if (newFollowing) state.selectedUserProfile.followersCount + 1 else (state.selectedUserProfile.followersCount - 1).coerceAtLeast(0)
+                state.selectedUserProfile.copy(isFollowing = newFollowing, followersCount = newCount)
+            } else state.selectedUserProfile
+
+            val updatedCurrentUser = if (newFollowState) {
+                state.currentUser.copy(followingCount = state.currentUser.followingCount + 1)
+            } else {
+                state.currentUser.copy(followingCount = (state.currentUser.followingCount - 1).coerceAtLeast(0))
+            }
+
+            state.copy(
+                currentUser = updatedCurrentUser,
+                users = updatedUsers,
+                peopleYouMayKnow = updatedPymk,
+                selectedUserProfile = updatedSelectedProfile
+            )
         }
         viewModelScope.launch {
             if (newFollowState) {
                 UserApiService.followUser(currentUid, userId)
             } else {
                 UserApiService.unfollowUser(currentUid, userId)
+            }
+            val targetData = UserApiService.fetchUserFollowData(userId)
+            val meData = UserApiService.fetchUserFollowData(currentUid)
+            _uiState.update { state ->
+                var nextState = state
+                if (targetData != null) {
+                    val isF = targetData.followers.contains(currentUid)
+                    nextState = nextState.copy(
+                        users = nextState.users.map {
+                            if (it.id == userId) it.copy(
+                                followersCount = targetData.followers.size,
+                                followingCount = targetData.following.size,
+                                isFollowing = isF
+                            ) else it
+                        },
+                        peopleYouMayKnow = nextState.peopleYouMayKnow.map {
+                            if (it.id == userId) it.copy(
+                                followersCount = targetData.followers.size,
+                                followingCount = targetData.following.size,
+                                isFollowing = isF
+                            ) else it
+                        },
+                        selectedUserProfile = if (nextState.selectedUserProfile?.id == userId) {
+                            nextState.selectedUserProfile?.copy(
+                                followersCount = targetData.followers.size,
+                                followingCount = targetData.following.size,
+                                isFollowing = isF
+                            )
+                        } else nextState.selectedUserProfile
+                    )
+                }
+                if (meData != null) {
+                    nextState = nextState.copy(
+                        currentUser = nextState.currentUser.copy(
+                            followersCount = meData.followers.size,
+                            followingCount = meData.following.size
+                        ),
+                        selectedUserProfile = if (nextState.selectedUserProfile?.id == currentUid) {
+                            nextState.selectedUserProfile?.copy(
+                                followersCount = meData.followers.size,
+                                followingCount = meData.following.size
+                            )
+                        } else nextState.selectedUserProfile
+                    )
+                }
+                nextState
             }
         }
     }
@@ -1808,6 +1872,32 @@ class FeatheredViewModel : ViewModel() {
             )
         }
         fetchUserProfilePosts(user.id)
+        viewModelScope.launch {
+            val followData = UserApiService.fetchUserFollowData(user.id)
+            if (followData != null) {
+                val currentUid = _uiState.value.currentUser.id
+                val isF = followData.followers.contains(currentUid)
+                _uiState.update { state ->
+                    val updatedProfile = if (state.selectedUserProfile?.id == user.id) {
+                        state.selectedUserProfile?.copy(
+                            followersCount = followData.followers.size,
+                            followingCount = followData.following.size,
+                            isFollowing = isF
+                        )
+                    } else state.selectedUserProfile
+                    state.copy(
+                        selectedUserProfile = updatedProfile,
+                        users = state.users.map {
+                            if (it.id == user.id) it.copy(
+                                followersCount = followData.followers.size,
+                                followingCount = followData.following.size,
+                                isFollowing = isF
+                            ) else it
+                        }
+                    )
+                }
+            }
+        }
     }
 
     fun openUserProfileById(userId: Long) {
@@ -1839,6 +1929,21 @@ class FeatheredViewModel : ViewModel() {
             )
         }
         fetchUserProfilePosts(current.id)
+        viewModelScope.launch {
+            val followData = UserApiService.fetchUserFollowData(current.id)
+            if (followData != null) {
+                _uiState.update { state ->
+                    val updatedCurrent = state.currentUser.copy(
+                        followersCount = followData.followers.size,
+                        followingCount = followData.following.size
+                    )
+                    state.copy(
+                        currentUser = updatedCurrent,
+                        selectedUserProfile = if (state.selectedUserProfile?.id == current.id) updatedCurrent else state.selectedUserProfile
+                    )
+                }
+            }
+        }
     }
 
     fun toggleVerifyUser(userId: Long) {

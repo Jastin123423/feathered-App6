@@ -1,6 +1,6 @@
 {
-  "name": " featherd-app6",
-  "description": "Imported from GitHub",
+  "name": "Feathered",
+  "description": "Feathered Social Network",
   "requestFramePermissions": [
     "camera",
     "microphone",

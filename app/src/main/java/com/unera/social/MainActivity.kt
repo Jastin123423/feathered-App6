@@ -258,6 +258,7 @@ fun FeatheredApp(
                         allUsers = uiState.users,
                         peopleYouMayKnow = uiState.peopleYouMayKnow,
                         onFollowFromPymk = { viewModel.toggleFollowUser(it) },
+                        onFollowUser = { viewModel.toggleFollowUser(it) },
                         onDismissPymk = { viewModel.dismissPymk(it) },
                         pymkLoading = uiState.isPymkLoading,
                         groups = uiState.groups,
@@ -393,6 +394,7 @@ fun FeatheredApp(
                         onCommentPost = { viewModel.setSelectedPostForComments(it) },
                         onSavePost = { viewModel.toggleSavePost(it) },
                         onSharePost = { viewModel.sharePost(it) },
+                        onOpenProduct = { product -> viewModel.setSelectedProductForDetail(product) },
                         onUpdateUserDetails = { bio, work, edu, loc, web ->
                             viewModel.updateUserDetails(bio, work, edu, loc, web)
                         },

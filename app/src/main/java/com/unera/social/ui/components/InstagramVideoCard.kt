@@ -117,6 +117,8 @@ fun InstagramVideoCard(
     onOpenComments: ((Post) -> Unit)? = null,
     onOpenReactions: ((Post) -> Unit)? = null,
     onCommentAdded: (() -> Unit)? = null,
+    isGuest: Boolean = false,
+    onRequestAuth: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -305,6 +307,10 @@ fun InstagramVideoCard(
     val heartAlpha = remember { Animatable(0f) }
 
     fun triggerDoubleTapLike() {
+        if (isGuest) {
+            onRequestAuth?.invoke()
+            return
+        }
         showHeartBurst = true
         coroutineScope.launch {
             if (localReaction != "love") {
@@ -412,7 +418,7 @@ fun InstagramVideoCard(
                         Text(
                             text = authorName,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
+                            fontSize = 21.sp,
                             color = Color(0xFFF8FAFC),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -420,10 +426,10 @@ fun InstagramVideoCard(
                         )
 
                         if (isVerified) {
-                            VerifiedBadge(size = 15.dp)
+                            VerifiedBadge(size = 18.dp)
                         }
 
-                        Text(text = "•", color = Color(0xFF64748B), fontSize = 12.sp)
+                        Text(text = "•", color = Color(0xFF64748B), fontSize = 14.sp)
 
                         if (isSponsored) {
                             Surface(
@@ -485,10 +491,14 @@ fun InstagramVideoCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Follow Button (if not me)
+                // Follow Button (if not me) - Only button kept on top
                 if (currentUser != null && currentUser.id != authorId) {
                     Button(
                         onClick = {
+                            if (isGuest) {
+                                onRequestAuth?.invoke()
+                                return@Button
+                            }
                             localFollowing = !localFollowing
                             onFollow?.invoke(authorId)
                         },
@@ -497,41 +507,13 @@ fun InstagramVideoCard(
                             contentColor = if (localFollowing) Color(0xFF94A3B8) else Color.White
                         ),
                         shape = RoundedCornerShape(6.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier.height(28.dp)
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        modifier = Modifier.height(30.dp)
                     ) {
                         Text(
                             text = if (localFollowing) "Following" else "Follow",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-
-                // "Watch in Videos" Pill
-                Surface(
-                    color = Color(0xFF1E293B),
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier
-                        .height(28.dp)
-                        .clickable { onVideoClick?.invoke(activePost) }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.PlayArrow,
-                            contentDescription = null,
-                            tint = Color(0xFF38BDF8),
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Text(
-                            text = "Videos",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF38BDF8)
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -540,7 +522,13 @@ fun InstagramVideoCard(
                 PostMenu(
                     item = activePost,
                     currentUser = currentUser,
-                    onShare = { onShareClick?.invoke(activePost) ?: run { showShareSheet = true } },
+                    onShare = {
+                        if (isGuest) {
+                            onRequestAuth?.invoke()
+                            return@PostMenu
+                        }
+                        onShareClick?.invoke(activePost) ?: run { showShareSheet = true }
+                    },
                     onDeleteSuccess = { onDelete?.invoke(it) },
                     onEditSuccess = { onEdit?.invoke(it.id, it.content) }
                 )
@@ -633,25 +621,6 @@ fun InstagramVideoCard(
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (isHdEnabled) Color.White else Color(0xFF38BDF8)
-                )
-            }
-
-            // Top-Right '>' Button to open in full videos/reels player
-            IconButton(
-                onClick = { onVideoClick?.invoke(activePost) },
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(12.dp)
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.65f))
-                    .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ChevronRight,
-                    contentDescription = "Open in Videos",
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
                 )
             }
 

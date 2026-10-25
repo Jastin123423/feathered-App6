@@ -167,6 +167,55 @@ object UserApiService {
         }
     }
 
+    /**
+     * GET /api/user-follows/list?userId={userId}
+     * Fetches exact live followers and following user ID arrays.
+     */
+    suspend fun fetchUserFollowData(userId: Long): FollowDataResult? = withContext(Dispatchers.IO) {
+        if (userId <= 0L) return@withContext null
+        try {
+            val url = URL("$BASE_URL/api/user-follows/list?userId=$userId")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("User-Agent", USER_AGENT)
+            }
+            if (conn.responseCode in 200..299) {
+                val responseText = BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }.trim()
+                if (responseText.startsWith("{")) {
+                    val root = JSONObject(responseText)
+                    val followersList = mutableListOf<Long>()
+                    val followingList = mutableListOf<Long>()
+
+                    val followersArr = root.optJSONArray("followers")
+                    if (followersArr != null) {
+                        for (i in 0 until followersArr.length()) {
+                            followersList.add(followersArr.optLong(i))
+                        }
+                    }
+                    val followingArr = root.optJSONArray("following")
+                    if (followingArr != null) {
+                        for (i in 0 until followingArr.length()) {
+                            followingList.add(followingArr.optLong(i))
+                        }
+                    }
+                    conn.disconnect()
+                    return@withContext FollowDataResult(
+                        userId = root.optLong("userId", userId),
+                        followers = followersList,
+                        following = followingList
+                    )
+                }
+            }
+            conn.disconnect()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        null
+    }
+
     fun parseSuggestionJson(obj: JSONObject): User? {
         val id = obj.optLong("id", obj.optLong("user_id", 0L))
         if (id <= 0L) return null
@@ -227,3 +276,10 @@ object UserApiService {
         )
     }
 }
+
+data class FollowDataResult(
+    val userId: Long,
+    val followers: List<Long>,
+    val following: List<Long>
+)
+
