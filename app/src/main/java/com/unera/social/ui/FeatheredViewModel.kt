@@ -652,153 +652,335 @@ class FeatheredViewModel : ViewModel() {
         backgroundStyle: String? = null,
         taggedUsers: List<Long> = emptyList()
     ) {
+        val trimmed = content.trim()
         val allMedia = if (mediaUrls.isNotEmpty()) mediaUrls else if (!mediaUrl.isNullOrBlank()) listOf(mediaUrl) else emptyList()
-        if (content.isBlank() && allMedia.isEmpty() && backgroundStyle.isNullOrBlank()) return
-        val newPost = Post(
-            id = System.currentTimeMillis(),
-            author = _uiState.value.currentUser,
-            content = content.trim(),
-            mediaUrl = allMedia.firstOrNull(),
-            mediaUrls = allMedia,
-            timestamp = "Just now",
-            feeling = feeling,
-            location = location,
-            backgroundStyle = backgroundStyle,
-            taggedUsers = taggedUsers,
-            likesCount = 0,
-            commentsCount = 0,
-            sharesCount = 0
-        )
-        // Dismiss dialog and begin upload progress banner immediately
+        if (trimmed.isBlank() && allMedia.isEmpty() && backgroundStyle.isNullOrBlank()) return
+
+        val currentUser = _uiState.value.currentUser
+
+        var hasVideos = false
+        var hasPhotos = false
+        if (context != null) {
+            for (m in allMedia) {
+                if (m.startsWith("content://") || m.startsWith("file://")) {
+                    val mime = try { context.contentResolver.getType(Uri.parse(m)) ?: "" } catch (_: Exception) { "" }
+                    if (mime.startsWith("video") || m.contains(".mp4") || m.contains("video")) {
+                        hasVideos = true
+                    } else {
+                        hasPhotos = true
+                    }
+                } else if (PostsApiService.isValidVideoUrl(m)) {
+                    hasVideos = true
+                } else {
+                    hasPhotos = true
+                }
+            }
+        } else {
+            hasVideos = allMedia.any { PostsApiService.isValidVideoUrl(it) }
+            hasPhotos = allMedia.isNotEmpty() && !hasVideos
+        }
+
+        // Preview for the progress banner
+        val previewUrl = allMedia.firstOrNull()
+
+        // 1. Initial State: 15% - "Uploading your post…"
         _uiState.update { state ->
             state.copy(
                 showCreatePostDialog = false,
                 postUploadState = PostUploadState(
                     isUploading = true,
-                    progress = 10f,
-                    title = "Posting to Feathered",
-                    secondaryStatus = if (allMedia.isNotEmpty()) "Preparing media..." else "Publishing post...",
-                    previewUrl = allMedia.firstOrNull(),
+                    progress = 15f,
+                    title = "Uploading your post…",
+                    secondaryStatus = if (hasPhotos) {
+                        "Please wait while your photos are being uploaded."
+                    } else if (hasVideos) {
+                        "Uploading and processing video..."
+                    } else {
+                        "Publishing post to your timeline..."
+                    },
+                    previewUrl = previewUrl,
                     isSuccess = false
                 )
             )
         }
 
         viewModelScope.launch {
-            val uploadedMetaList = mutableListOf<MediaMetaItem>()
-            val uploadedUrls = mutableListOf<String>()
-            var primaryVideoUrl: String? = null
-            var primaryThumbUrl: String? = null
-            var isAnyVideo = false
+            try {
+                var finalMediaUrl: String? = null
+                var finalMediaType: String? = null
+                val finalMediaUrls = mutableListOf<String>()
+                val finalMediaTypes = mutableListOf<String>()
+                val finalMediaMeta = mutableListOf<MediaMetaItem>()
+                var primaryVideoUrl: String? = null
+                var primaryThumbUrl: String? = null
 
-            for ((index, item) in allMedia.withIndex()) {
-                val isLocalUri = item.startsWith("content://") || item.startsWith("file://")
-                if (isLocalUri && context != null) {
-                    val uri = Uri.parse(item)
-                    val mimeType = context.contentResolver.getType(uri) ?: ""
-                    val isVideoItem = mimeType.startsWith("video") || item.contains(".mp4") || item.contains("video")
-                    if (isVideoItem) isAnyVideo = true
+                if (hasPhotos && !hasVideos && allMedia.isNotEmpty() && context != null) {
+                    // ==========================================
+                    // BRANCH 1: IMAGE(S) — Compression -> R2
+                    // ==========================================
+                    _uiState.update { state ->
+                        state.copy(
+                            postUploadState = state.postUploadState?.copy(
+                                progress = 30f,
+                                secondaryStatus = "Preparing and optimizing photos..."
+                            )
+                        )
+                    }
 
-                    val result = MediaUploadHelper.processAndUploadMedia(
-                        context = context,
-                        uri = uri,
-                        isVideoHint = isVideoItem
-                    ) { statusMsg, pct ->
+                    var completedFiles = 0
+                    for ((idx, item) in allMedia.withIndex()) {
+                        if (item.startsWith("content://") || item.startsWith("file://")) {
+                            val uri = Uri.parse(item)
+                            val bundleResult = MediaUploadHelper.buildImageBundleAndUpload(context, uri)
+                            if (bundleResult != null) {
+                                val feed = bundleResult.feedUrl
+                                val thumb = bundleResult.thumbUrl
+                                val full = bundleResult.originalUrl
+                                finalMediaUrls.add(feed)
+                                finalMediaTypes.add("image")
+                                finalMediaMeta.add(
+                                    MediaMetaItem(
+                                        thumb = thumb,
+                                        feed = feed,
+                                        full = full,
+                                        original = full,
+                                        thumbnailUrl = thumb,
+                                        resolution720 = feed,
+                                        resolution1080 = full,
+                                        type = "image",
+                                        width = bundleResult.width,
+                                        height = bundleResult.height
+                                    )
+                                )
+                            } else {
+                                finalMediaUrls.add(item)
+                                finalMediaTypes.add("image")
+                                finalMediaMeta.add(
+                                    MediaMetaItem(
+                                        thumb = item,
+                                        feed = item,
+                                        full = item,
+                                        type = "image"
+                                    )
+                                )
+                            }
+                        } else {
+                            finalMediaUrls.add(item)
+                            finalMediaTypes.add("image")
+                            finalMediaMeta.add(
+                                MediaMetaItem(
+                                    thumb = item,
+                                    feed = item,
+                                    full = item,
+                                    type = "image"
+                                )
+                            )
+                        }
+
+                        completedFiles++
+                        val pct = minOf(85f, 30f + ((completedFiles.toFloat() / allMedia.size) * 55f))
                         _uiState.update { state ->
                             state.copy(
                                 postUploadState = state.postUploadState?.copy(
-                                    progress = 10f + (pct * 0.7f),
-                                    secondaryStatus = statusMsg
+                                    progress = pct,
+                                    secondaryStatus = if (allMedia.size > 1) {
+                                        "Uploaded photo $completedFiles of ${allMedia.size}..."
+                                    } else {
+                                        "Please wait while your photos are being uploaded."
+                                    }
                                 )
                             )
                         }
                     }
 
-                    if (result != null) {
-                        uploadedUrls.add(result.originalUrl)
-                        uploadedMetaList.add(result.toMediaMetaItem())
-                        if (result.isVideo && primaryVideoUrl == null) {
-                            primaryVideoUrl = result.originalUrl
-                            primaryThumbUrl = result.thumbUrl
+                    finalMediaUrl = finalMediaUrls.firstOrNull()
+                    finalMediaType = "image"
+
+                } else if (hasVideos && allMedia.isNotEmpty() && context != null) {
+                    // ==========================================
+                    // BRANCH 2: VIDEO(S) — R2 (no /api/reels call)
+                    // ==========================================
+                    _uiState.update { state ->
+                        state.copy(
+                            postUploadState = state.postUploadState?.copy(
+                                progress = 40f,
+                                secondaryStatus = "Uploading and processing video..."
+                            )
+                        )
+                    }
+
+                    val videoItem = allMedia.find {
+                        val mime = try { context.contentResolver.getType(Uri.parse(it)) ?: "" } catch (_: Exception) { "" }
+                        mime.startsWith("video") || PostsApiService.isValidVideoUrl(it)
+                    } ?: allMedia.first()
+
+                    if (videoItem.startsWith("content://") || videoItem.startsWith("file://")) {
+                        val uri = Uri.parse(videoItem)
+                        val videoResult = MediaUploadHelper.processAndUploadVideo(
+                            context = context,
+                            uri = uri
+                        ) { statusMsg, progressPct ->
+                            _uiState.update { state ->
+                                state.copy(
+                                    postUploadState = state.postUploadState?.copy(
+                                        progress = 40f + (progressPct * 0.45f), // 40% to 85%
+                                        secondaryStatus = statusMsg
+                                    )
+                                )
+                            }
+                        }
+
+                        if (videoResult != null) {
+                            val origUrl = videoResult.originalUrl
+                            val high1080Url = videoResult.url1080
+                            val low720Url = videoResult.url720
+                            val thumbUrl = videoResult.thumbUrl
+                            val primaryPlaybackUrl = low720Url.ifBlank { origUrl }
+
+                            primaryVideoUrl = primaryPlaybackUrl
+                            primaryThumbUrl = thumbUrl
+
+                            finalMediaUrl = primaryPlaybackUrl
+                            finalMediaType = "video"
+
+                            if (!thumbUrl.isNullOrBlank()) {
+                                finalMediaUrls.addAll(listOf(origUrl, high1080Url, low720Url, thumbUrl))
+                                finalMediaTypes.addAll(listOf("video", "video", "video", "image"))
+                            } else {
+                                finalMediaUrls.addAll(listOf(origUrl, high1080Url, low720Url))
+                                finalMediaTypes.addAll(listOf("video", "video", "video"))
+                            }
+
+                            finalMediaMeta.add(
+                                MediaMetaItem(
+                                    original = origUrl,
+                                    resolution1080 = high1080Url,
+                                    resolution720 = low720Url,
+                                    thumbnailUrl = thumbUrl,
+                                    thumb = thumbUrl,
+                                    feed = low720Url,
+                                    full = high1080Url,
+                                    type = "video",
+                                    width = videoResult.width,
+                                    height = videoResult.height,
+                                    duration = videoResult.durationSec
+                                )
+                            )
+                        } else {
+                            finalMediaUrl = videoItem
+                            finalMediaType = "video"
+                            primaryVideoUrl = videoItem
+                            finalMediaUrls.add(videoItem)
+                            finalMediaTypes.add("video")
+                            finalMediaMeta.add(MediaMetaItem(original = videoItem, type = "video"))
                         }
                     } else {
-                        // Fallback to local URI if upload failed
-                        uploadedUrls.add(item)
+                        primaryVideoUrl = videoItem
+                        finalMediaUrl = videoItem
+                        finalMediaType = "video"
+                        finalMediaUrls.add(videoItem)
+                        finalMediaTypes.add("video")
+                        finalMediaMeta.add(MediaMetaItem(original = videoItem, type = "video"))
                     }
-                } else {
-                    // Already an HTTP URL
-                    uploadedUrls.add(item)
-                    val isVid = PostsApiService.isValidVideoUrl(item)
-                    if (isVid) {
-                        isAnyVideo = true
-                        if (primaryVideoUrl == null) primaryVideoUrl = item
-                    }
-                    uploadedMetaList.add(
-                        MediaMetaItem(
-                            original = item,
-                            resolution1080 = item,
-                            resolution720 = item,
-                            feed = item,
-                            full = item,
-                            type = if (isVid) "video" else "image"
+                } else if (allMedia.isNotEmpty()) {
+                    // Already uploaded HTTP URLs
+                    finalMediaUrls.addAll(allMedia)
+                    val isVid = allMedia.any { PostsApiService.isValidVideoUrl(it) }
+                    finalMediaType = if (isVid) "video" else "image"
+                    finalMediaUrl = allMedia.firstOrNull()
+                    if (isVid) primaryVideoUrl = finalMediaUrl
+                    finalMediaTypes.addAll(allMedia.map { if (isVid) "video" else "image" })
+                    finalMediaMeta.add(MediaMetaItem(original = finalMediaUrl, type = finalMediaType))
+                }
+
+                // ==========================================
+                // 90%: Publishing post to timeline...
+                // ==========================================
+                _uiState.update { state ->
+                    state.copy(
+                        postUploadState = state.postUploadState?.copy(
+                            progress = 90f,
+                            secondaryStatus = "Publishing post to your timeline..."
                         )
                     )
                 }
-            }
 
-            _uiState.update { state ->
-                state.copy(
-                    postUploadState = state.postUploadState?.copy(
-                        progress = 85f,
-                        secondaryStatus = "Finalizing post..."
-                    )
-                )
-            }
+                val postType = if (finalMediaType == "video") "video" else if (finalMediaType == "image") "image" else "text"
 
-            val finalMediaUrls = if (uploadedUrls.isNotEmpty()) uploadedUrls else allMedia
-            val finalMediaType = if (isAnyVideo) "video" else if (finalMediaUrls.isNotEmpty()) "image" else null
-
-            val livePost = PostsApiService.createPost(
-                userId = _uiState.value.currentUser.id,
-                content = content,
-                mediaUrl = finalMediaUrls.firstOrNull(),
-                mediaUrls = finalMediaUrls,
-                mediaType = finalMediaType,
-                videoUrl = primaryVideoUrl,
-                thumbnailUrl = primaryThumbUrl,
-                mediaMeta = uploadedMetaList,
-                feeling = feeling,
-                location = location,
-                background = backgroundStyle,
-                taggedUsers = taggedUsers
-            )
-
-            // Add post to feed and mark complete
-            _uiState.update { state ->
-                val finalPost = livePost ?: newPost.copy(
-                    mediaUrl = finalMediaUrls.firstOrNull(),
+                // SINGLE FINAL INSERT — images AND videos use /api/posts
+                val livePost = PostsApiService.createPost(
+                    userId = currentUser.id,
+                    content = trimmed,
+                    mediaUrl = finalMediaUrl,
                     mediaUrls = finalMediaUrls,
                     mediaType = finalMediaType,
+                    mediaTypes = finalMediaTypes,
                     videoUrl = primaryVideoUrl,
-                    mediaMeta = uploadedMetaList
+                    thumbnailUrl = primaryThumbUrl,
+                    mediaMeta = finalMediaMeta,
+                    feeling = feeling,
+                    location = location,
+                    background = backgroundStyle,
+                    taggedUsers = taggedUsers,
+                    type = postType,
+                    visibility = "public"
                 )
-                state.copy(
-                    posts = listOf(finalPost) + state.posts.filter { it.id != newPost.id },
-                    postUploadState = state.postUploadState?.copy(
-                        progress = 100f,
-                        isUploading = false,
-                        isSuccess = true,
-                        title = "Posted to Feathered",
-                        secondaryStatus = "Just now"
+
+                val newPost = Post(
+                    id = livePost?.id ?: System.currentTimeMillis(),
+                    author = currentUser,
+                    content = trimmed,
+                    mediaUrl = finalMediaUrl,
+                    mediaUrls = finalMediaUrls,
+                    mediaTypes = finalMediaTypes,
+                    mediaMeta = finalMediaMeta,
+                    timestamp = "Just now",
+                    feeling = feeling,
+                    location = location,
+                    backgroundStyle = backgroundStyle,
+                    taggedUsers = taggedUsers,
+                    postType = postType,
+                    videoUrl = primaryVideoUrl,
+                    mediaType = finalMediaType,
+                    likesCount = 0,
+                    commentsCount = 0,
+                    sharesCount = 0
+                )
+
+                _uiState.update { state ->
+                    val resolvedPost = (livePost?.copy(author = currentUser) ?: newPost)
+                    state.copy(
+                        posts = listOf(resolvedPost) + state.posts.filter { it.id != resolvedPost.id },
+                        postUploadState = state.postUploadState?.copy(
+                            isUploading = false,
+                            isSuccess = true,
+                            progress = 100f,
+                            title = "Post uploaded successfully!",
+                            secondaryStatus = "Your post is now visible on your timeline."
+                        )
                     )
-                )
-            }
-            delay(3500)
-            // Auto dismiss success banner after delay
-            _uiState.update { state ->
-                if (state.postUploadState?.isSuccess == true) {
-                    state.copy(postUploadState = null)
-                } else state
+                }
+
+                // Auto-clear success banner after 2.8s matching web
+                delay(2800)
+                _uiState.update { it.copy(postUploadState = null) }
+
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _uiState.update { state ->
+                    state.copy(
+                        postUploadState = state.postUploadState?.copy(
+                            isUploading = false,
+                            isSuccess = false,
+                            progress = 0f,
+                            title = "Upload failed",
+                            secondaryStatus = e.message ?: "Failed to upload files. Please try again.",
+                            error = e.message ?: "Upload error"
+                        )
+                    )
+                }
+                delay(4000)
+                _uiState.update { it.copy(postUploadState = null) }
             }
         }
     }

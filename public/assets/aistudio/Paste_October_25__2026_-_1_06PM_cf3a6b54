@@ -1,0 +1,888 @@
+# Complete Create Post (Images + Videos) — CORRECTED
+
+You're right on both points. Here is the corrected end-to-end report:
+
+- ✅ **Both images and videos go through the SAME `/api/posts` call** — no separate `/api/reels` call for videos.
+- ✅ **Media host is now `https://media.featheredsocial.site/`** — not `unera.social`.
+
+---
+
+## 📋 Table of Contents
+
+1. [Entry Points (UI triggers)](#1-entry-points)
+2. [Modal / Composer](#2-modal--composer)
+3. [The `createPost` Function (THE CORE — corrected)](#3-the-createpost-function-the-core--corrected)
+4. [Image Pipeline (exact)](#4-image-pipeline-exact)
+5. [Video Pipeline (exact — no /api/reels call)](#5-video-pipeline-exact--no-apireels-call)
+6. [Upload Endpoint Contract (`/api/upload`)](#6-upload-endpoint-contract-apiupload)
+7. [Final DB Insert (`/api/posts` — single endpoint, images + videos)](#7-final-db-insert-apiposts--single-endpoint-images--videos)
+8. [Progress UI](#8-progress-ui)
+9. [Full Data Flow Diagram](#9-full-data-flow-diagram)
+10. [Backend Requirements](#10-backend-requirements)
+
+---
+
+## 1. Entry Points
+
+From your `App.tsx`, these are **all** the ways a post-creation is triggered:
+
+```tsx
+// A) Composer card on Home feed
+<CreatePost
+  currentUser={currentUser}
+  onPhotoClick={handlePhotoClick}           // → phonePhotoInputRef.click()
+  onVideoClick={handleVideoClickFromCreate} // → phoneVideoInputRef.click()
+  onClick={() => setShowCreatePostModal(true)}
+  onCreateEventClick={() => setShowCreateEventModal(true)}
+/>
+
+// B) Header "Create Post" button
+onCreatePostClick={() => {
+  if (!requireAuth('Creating posts')) return;
+  setShowCreatePostModal(true);
+}}
+```
+
+Two hidden file inputs (mobile gallery):
+
+```tsx
+<input
+  type="file"
+  ref={phonePhotoInputRef}
+  className="hidden"
+  accept="image/*"
+  multiple
+  onChange={handlePhonePhotoSelected}
+/>
+<input
+  type="file"
+  ref={phoneVideoInputRef}
+  className="hidden"
+  accept="video/*"
+  onChange={handlePhoneVideoSelected}
+/>
+```
+
+Their handlers:
+
+```tsx
+const handlePhonePhotoSelected = useCallback((e) => {
+  const list = Array.from<File>(e.target.files || []);
+  if (!list.length) return;
+  const previews = list.map((f) => URL.createObjectURL(f));
+  setPendingPostMedia({ files: list, previews, mediaUrls: previews, mediaType: 'image' });
+  setShowCreatePostModal(true);
+}, []);
+
+const handlePhoneVideoSelected = useCallback((e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const preview = URL.createObjectURL(file);
+  setPendingPostMedia({ files: [file], previews: [preview], mediaUrls: [preview], mediaType: 'video' });
+  setShowCreatePostModal(true);
+}, []);
+```
+
+---
+
+## 2. Modal / Composer
+
+```tsx
+{showCreatePostModal && currentUser && (
+  <CreatePostModal
+    currentUser={currentUser}
+    users={users}
+    initialMedia={pendingPostMedia}
+    onClose={() => {
+      setShowCreatePostModal(false);
+      setPendingPostMedia(null);
+    }}
+    onCreatePost={(text, files, meta) => {
+      setPendingPostMedia(null);
+      createPost(text, files as any, meta);   // ← THE ENTRY POINT TO THE CORE
+    }}
+    onCreateEventClick={() => {
+      setShowCreatePostModal(false);
+      setShowCreateEventModal(true);
+    }}
+  />
+)}
+```
+
+`meta` contract between `CreatePostModal` and `createPost`:
+
+```ts
+{
+  type?: 'text' | 'image' | 'video';
+  visibility?: string;
+  location?: string;
+  feeling?: string;
+  taggedUsers?: number[];
+  background?: string;
+  linkPreview?: any;
+  nativeMediaMeta?: any[];       // Flutter native uploads
+  nativeMediaUrls?: string[];
+  nativeMediaTypes?: string[];
+  thumbnailFile?: File | null;   // pre-extracted video thumbnail
+  compressedVideosPromise?: Promise<CompressedVideoResult | null> | null;
+  compressedVideos?: CompressedVideoResult | null;
+}
+```
+
+---
+
+## 3. The `createPost` Function (THE CORE — corrected)
+
+> **What changed vs. your original App.tsx:**  
+> - ❌ **Removed** the entire `/api/reels` attach block for videos.  
+> - ✅ **Everything** (text, image, video) now goes through the **single** `/api/posts` insert at the end.  
+> - ✅ `reel_id` is no longer sent in the payload (was only ever set by that reel block).
+
+```tsx
+const createPost = useCallback(
+  async (
+    text: string,
+    files: File[] | File | null,
+    meta?: {
+      type?: 'text' | 'image' | 'video';
+      visibility?: string;
+      location?: string;
+      feeling?: string;
+      taggedUsers?: number[];
+      background?: string;
+      linkPreview?: any;
+      nativeMediaMeta?: any[];
+      nativeMediaUrls?: string[];
+      nativeMediaTypes?: string[];
+      thumbnailFile?: File | null;
+      compressedVideosPromise?: Promise<CompressedVideoResult | null> | null;
+      compressedVideos?: CompressedVideoResult | null;
+    }
+  ) => {
+    if (!requireAuth('Creating posts')) return;
+
+    const trimmed = (text || '').trim();
+    if (!trimmed && !files && !meta?.background && !meta?.nativeMediaMeta?.length) return;
+
+    const list: File[] = Array.isArray(files) ? files : (files ? [files] : []);
+
+    let media_urls: string[] = [];
+    let media_types: string[] = [];
+    let media_meta: any[] = [];
+    let media_url: string | null = null;
+    let media_type: string | null = null;
+
+    const metaAny = meta as any;
+    const hasPhotos =
+      meta?.type === 'image' ||
+      (list.length > 0 && list.some(f => f.type.startsWith('image/')));
+
+    // ---- Preview for the progress banner ----
+    let previewUrl: string | undefined;
+    if (list.length > 0 && list[0].type.startsWith('image/')) {
+      try { previewUrl = URL.createObjectURL(list[0]); } catch {}
+    } else if (meta?.nativeMediaUrls?.[0]) {
+      previewUrl = meta.nativeMediaUrls[0];
+    }
+
+    // ---- Show banner: "Uploading your post…" ----
+    setPostUploadState({
+      isUploading: true,
+      progress: 15,
+      title: 'Uploading your post…',
+      secondaryStatus: hasPhotos
+        ? 'Please wait while your photos are being uploaded.'
+        : 'Publishing post to your timeline...',
+      previewUrl,
+      isSuccess: false,
+    });
+
+    try {
+      // =========================================================
+      // BRANCH 0: NATIVE (Flutter) — files already uploaded natively
+      // =========================================================
+      if (meta?.nativeMediaMeta && meta.nativeMediaMeta.length > 0) {
+        media_urls  = meta.nativeMediaUrls || [];
+        media_types = meta.nativeMediaTypes || [];
+        media_meta  = meta.nativeMediaMeta;
+        media_url   = media_urls[0] || null;
+        media_type  = media_types[0] || null;
+
+        setPostUploadState(prev => prev ? ({
+          ...prev, progress: 65,
+          secondaryStatus: 'Processing media attachments...',
+        }) : null);
+      }
+      // =========================================================
+      // BRANCH 1: IMAGE(S) — browser compression → R2
+      // =========================================================
+      else if (meta?.type === 'image' && list.length) {
+        // ... see §4
+      }
+      // =========================================================
+      // BRANCH 2: VIDEO / OTHER FILES — R2 (no /api/reels call)
+      // =========================================================
+      else if (list.length) {
+        // ... see §5
+      }
+    } catch (error: any) {
+      setPostUploadState(prev => prev ? ({
+        ...prev,
+        isUploading: false,
+        isSuccess: false,
+        error: error?.message || 'Upload error',
+        title: 'Upload failed',
+        secondaryStatus: error?.message || 'Failed to upload files. Please try again.',
+      }) : null);
+      setTimeout(() => {
+        setPostUploadState(null);
+        if (previewUrl) { try { URL.revokeObjectURL(previewUrl); } catch {} }
+      }, 4000);
+      setLoginError(`Failed to upload files: ${error?.message || 'Upload error'}`);
+      return;
+    }
+
+    // =========================================================
+    // ❌ REMOVED: /api/reels attachment block for videos.
+    //    Videos now go straight into /api/posts like images.
+    // =========================================================
+
+    setPostUploadState(prev => prev ? ({
+      ...prev, progress: 90,
+      secondaryStatus: 'Publishing post to your timeline...',
+    }) : null);
+
+    const isVideoPost =
+      media_type === 'video' ||
+      meta?.type === 'video' ||
+      (list.length > 0 && list.some(f => f.type.startsWith('video/')));
+
+    // =========================================================
+    // SINGLE FINAL INSERT — images AND videos use /api/posts
+    // =========================================================
+    const payload: any = {
+      user_id: currentUser!.id,
+      content: trimmed,
+      media_url,
+      media_type: isVideoPost ? 'video' : media_type,
+      media_urls:  media_urls.length  ? media_urls  : undefined,
+      media_types: media_types.length ? media_types : undefined,
+      media_meta:  media_meta.length  ? media_meta  : undefined,
+      visibility: meta?.visibility ?? 'public',
+      song_name:  metaAny?.song_name  || metaAny?.sound?.title    || undefined,
+      song_id:    metaAny?.song_id    || metaAny?.sound?.id       || undefined,
+      audio_url:  metaAny?.audio_url  || metaAny?.sound?.audioUrl || undefined,
+      location:   meta?.location,
+      feeling:    meta?.feeling,
+      tagged_users: meta?.taggedUsers,
+      background:  meta?.background || metaAny?.colours || undefined,
+      colours:     meta?.background || metaAny?.colours || undefined,
+      background_style: meta?.background || metaAny?.colours || undefined,
+      link_preview: meta?.linkPreview,
+      feed_key: `post:${Date.now()}`,
+      type: isVideoPost ? 'video' : (() => {
+        const t = media_type || media_types[0] || null;
+        if (!t) return meta?.type || 'text';
+        if (typeof t === 'string' && t.startsWith('image')) return 'image';
+        if (typeof t === 'string' && t.startsWith('video')) return 'video';
+        if (typeof t === 'string' && t.startsWith('audio')) return 'audio';
+        return meta?.type || 'text';
+      })(),
+    };
+
+    const data = await apiFetch('/api/posts', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+
+    const newPostRaw = data?.post ?? {
+      ...payload,
+      colours: meta?.background || metaAny?.colours || undefined,
+      background: meta?.background || metaAny?.colours || undefined,
+      background_style: meta?.background || metaAny?.colours || undefined,
+      post_id: data?.post_id ?? data?.id ?? Date.now(),
+      created_at: new Date().toISOString(),
+    };
+
+    // Safety normalize: force every image full → feed
+    if (Array.isArray((newPostRaw as any).media_meta)) {
+      (newPostRaw as any).media_meta = (newPostRaw as any).media_meta.map((m: any) => ({
+        ...m,
+        thumb: m?.thumb || '',
+        feed:  m?.feed  || m?.full || m?.thumb || '',
+        full:  m?.feed  || m?.full || m?.thumb || '',
+        type:  m?.type  || 'image',
+      }));
+    }
+
+    const normalized = normalizePost(newPostRaw);
+
+    // ----- Optimistic insert into feed + profile -----
+    setPosts(prev => {
+      const next = [normalized, ...safeArray(prev)];
+      lastGoodPostsRef.current = next;
+      stableFeedRef.current = next;
+      return next;
+    });
+
+    setProfilePosts(prev => {
+      if (!currentUser) return prev;
+      const isMyProfile = Number(selectedUserId) === Number(currentUser.id);
+      if (!isMyProfile) return prev;
+      return [normalized, ...safeArray(prev)];
+    });
+
+    pushSeenIds([Number((normalized as any).id)]);
+
+    setShowCreatePostModal(false);
+    scheduleSilentRefresh();
+
+    // ----- Success state -----
+    setPostUploadState(prev => prev ? ({
+      ...prev,
+      isUploading: false,
+      isSuccess: true,
+      progress: 100,
+      title: 'Post uploaded successfully!',
+      secondaryStatus: 'Your post is now visible on your timeline.',
+    }) : null);
+
+    setTimeout(() => {
+      setPostUploadState(null);
+      if (previewUrl) { try { URL.revokeObjectURL(previewUrl); } catch {} }
+    }, 2800);
+  },
+  [currentUser, requireAuth, scheduleSilentRefresh, selectedUserId]
+);
+```
+
+---
+
+## 4. Image Pipeline (exact)
+
+```tsx
+else if (meta?.type === 'image' && list.length) {
+  setPostUploadState(prev => prev ? ({
+    ...prev,
+    progress: 30,
+    secondaryStatus: 'Preparing and optimizing photos...',
+  }) : null);
+
+  let completedFiles = 0;
+  const uploadedItems = await Promise.all(
+    list.map(async (file) => {
+      // 🔑 COMPRESSION: three variants (thumb / feed / full)
+      const bundle = await buildImageUploadBundle(file);   // from './utils/imageCompression'
+
+      const form = new FormData();
+      form.append('thumbnail', bundle.thumb);
+      form.append('feed',      bundle.feed);
+      form.append('original',  bundle.full);
+
+      const data = await apiFetch('/api/upload', {
+        method: 'POST',
+        body: form,
+      });
+
+      const thumb = data?.uploaded?.thumbnail?.url || data?.media_urls?.thumb || '';
+      const feed  = data?.uploaded?.feed?.url      || data?.media_urls?.feed  || '';
+
+      if (!feed) throw new Error('Image upload failed: missing feed URL');
+
+      completedFiles++;
+      const pct = Math.min(85, 30 + Math.round((completedFiles / list.length) * 55));
+      setPostUploadState(prev => prev ? ({
+        ...prev,
+        progress: pct,
+        secondaryStatus: list.length > 1
+          ? `Uploaded photo ${completedFiles} of ${list.length}...`
+          : 'Please wait while your photos are being uploaded.',
+      }) : null);
+
+      return { thumb, feed, full: feed, type: 'image' };
+    })
+  );
+
+  media_urls  = uploadedItems.map(i => i.feed).filter(Boolean);
+  media_meta  = uploadedItems.map(i => ({ thumb: i.thumb, feed: i.feed, full: i.feed, type: 'image' }));
+  media_types = uploadedItems.map(() => 'image');
+  media_url   = uploadedItems[0]?.feed || null;
+  media_type  = 'image';
+}
+```
+
+### What `buildImageUploadBundle` returns
+
+From `./utils/imageCompression`:
+
+```ts
+{
+  thumb: File,   // WebP ~320px, quality 0.72
+  feed:  File,   // WebP ~1080px, quality 0.82
+  full:  File,   // WebP, high-quality (feed = full in some codepaths)
+}
+```
+
+### What lands in `posts` table for images
+
+```
+media_url   = https://media.featheredsocial.site/.../feed.webp
+media_type  = 'image'
+media_urls  = [feed_1, feed_2, ...]              (JSON array)
+media_types = ['image', 'image', ...]            (JSON array)
+media_meta  = [{ thumb, feed, full, type }, ...] (JSON array)
+type        = 'image'
+```
+
+---
+
+## 5. Video Pipeline (exact — no /api/reels call)
+
+```tsx
+else if (list.length) {
+  const isVideoFile = (f: File) => {
+    if (!f) return false;
+    const t = String(f.type || '').toLowerCase();
+    const n = String(f.name || '').toLowerCase();
+    return t.startsWith('video/') || /\.(mp4|webm|mov|m4v|m3u8|3gp|avi|mkv)$/i.test(n);
+  };
+  const isVideo = meta?.type === 'video' || list.some(isVideoFile);
+
+  setPostUploadState(prev => prev ? ({
+    ...prev,
+    progress: 40,
+    secondaryStatus: isVideo
+      ? 'Uploading and processing video...'
+      : 'Uploading media files...',
+  }) : null);
+
+  if (isVideo) {
+    const videoFile = list.find(isVideoFile) || list[0];
+    let thumbFile: File | null = meta?.thumbnailFile || null;
+
+    // --- Dual browser-side compression (1080p + 720p) ---
+    let compressed: CompressedVideoResult | null = meta?.compressedVideos || null;
+    if (!compressed && meta?.compressedVideosPromise) {
+      try { compressed = await meta.compressedVideosPromise; } catch (e) {}
+    }
+    if (!compressed && videoFile) {
+      try { compressed = await compressVideoDual(videoFile); } catch (err) {}
+    }
+
+    // --- Thumbnail fallback ---
+    if (!thumbFile && compressed?.thumbnailFile) thumbFile = compressed.thumbnailFile;
+    if (!thumbFile && videoFile) {
+      try { const res = await generateVideoThumbnail(videoFile); thumbFile = res.file; } catch {}
+    }
+
+    const file1080 = compressed?.high1080pFile || videoFile;
+    const file720  = compressed?.low720pFile  || videoFile;
+
+    // --- Upload 4 assets in parallel to R2 (media.featheredsocial.site) ---
+    const [origUp, high1080Up, low720Up, thumbUp] = await Promise.all([
+      uploadToCloudflareR2(videoFile, 'posts/videos/original'),
+      uploadToCloudflareR2(file1080,  'posts/videos/1080p'),
+      uploadToCloudflareR2(file720,   'posts/videos/720p'),
+      thumbFile ? uploadToCloudflareR2(thumbFile, 'posts/thumbnails') : Promise.resolve(null),
+    ]);
+
+    const origUrl     = origUp.url;        // https://media.featheredsocial.site/posts/videos/original/...
+    const high1080Url = high1080Up.url;    // https://media.featheredsocial.site/posts/videos/1080p/...
+    const low720Url   = low720Up.url;      // https://media.featheredsocial.site/posts/videos/720p/...
+    let   thumbUrl    = thumbUp?.url || null; // https://media.featheredsocial.site/posts/thumbnails/...
+
+    // Thumbnail safety: retry if missing or wrong MIME
+    if (!thumbUrl && thumbFile) {
+      try {
+        const retry = await uploadToCloudflareR2(thumbFile, 'posts/thumbnails');
+        thumbUrl = retry?.url || null;
+      } catch {}
+    }
+    const isInvalidThumb =
+      !thumbUrl || thumbUrl.match(/\.(mp4|webm|mov|m4v|3gp|avi|mkv)(\?|$)/i);
+    if (isInvalidThumb && videoFile) {
+      try {
+        const res = await generateVideoThumbnail(videoFile);
+        if (res?.file) {
+          const freshUp = await uploadToCloudflareR2(res.file, 'posts/thumbnails');
+          thumbUrl = freshUp?.url || null;
+        }
+      } catch {}
+    }
+
+    // ---- Final asset mapping (all URLs on media.featheredsocial.site) ----
+    const primaryPlaybackUrl = low720Url || origUrl;
+
+    media_url   = primaryPlaybackUrl;
+    media_type  = 'video';
+
+    media_urls  = thumbUrl
+      ? [origUrl, high1080Url, low720Url, thumbUrl]
+      : [origUrl, high1080Url, low720Url];
+
+    media_types = thumbUrl
+      ? ['video', 'video', 'video', 'image']
+      : ['video', 'video', 'video'];
+
+    media_meta = [{
+      original:      origUrl,
+      '1080':        high1080Url,
+      '720':         low720Url,
+      thumbnail_url: thumbUrl,
+      thumb:         thumbUrl,
+      feed:          low720Url,
+      full:          high1080Url,
+      type:          'video',
+      width:         compressed?.highWidth  || undefined,
+      height:        compressed?.highHeight || undefined,
+      duration:      compressed?.duration   || undefined,
+    }];
+  } else {
+    // Generic non-video files
+    const ups = await Promise.all(list.map((f) => uploadToCloudflareR2(f)));
+    media_urls  = ups.map((u) => u.url).filter(Boolean);
+    media_types = ups.map((u) => u.type).filter(Boolean);
+    media_url   = media_urls[0] ?? null;
+    media_type  = media_types[0] ?? null;
+  }
+}
+```
+
+### `uploadToCloudflareR2` (verbatim)
+
+```tsx
+const uploadToCloudflareR2 = async (
+  file: File,
+  folder = 'posts'
+): Promise<{ url: string; type: string; filename: string }> => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('filename', file.name);
+  formData.append('type', file.type);
+  formData.append('folder', folder);
+  formData.append('timestamp', Date.now().toString());
+
+  const response = await fetch('/api/upload', { method: 'POST', body: formData });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || `Upload failed: ${response.status}`);
+  }
+
+  const result = await response.json();
+  if (!result.url) throw new Error('No URL returned from upload');
+
+  return { url: result.url, type: file.type, filename: file.name };
+};
+```
+
+### What lands in `posts` table for videos
+
+```
+media_url   = https://media.featheredsocial.site/posts/videos/720p/....mp4   ← primary streaming
+media_type  = 'video'
+media_urls  = [original, 1080p, 720p, thumbnail]    (JSON array — 4 URLs)
+media_types = ['video','video','video','image']     (JSON array)
+media_meta  = [{
+  original, '1080', '720', thumbnail_url,
+  thumb, feed, full, type:'video',
+  width, height, duration
+}]                                                   (JSON array — 1 object)
+type        = 'video'
+```
+
+> **🚫 No `reel_id`.** No `/api/reels` call. Video row goes into `posts` exactly like an image row — just with video `type`/`media_type` and the 4-URL `media_meta`.
+
+---
+
+## 6. Upload Endpoint Contract (`/api/upload`)
+
+The endpoint must **write to `media.featheredsocial.site`** and return these two response shapes:
+
+### A. Image bundle (FormData: `thumbnail`, `feed`, `original`)
+
+```json
+{
+  "success": true,
+  "uploaded": {
+    "thumbnail": { "url": "https://media.featheredsocial.site/.../thumb.webp" },
+    "feed":      { "url": "https://media.featheredsocial.site/.../feed.webp"  },
+    "original":  { "url": "https://media.featheredsocial.site/.../full.webp"  }
+  },
+  "media_urls": {
+    "thumb": "https://media.featheredsocial.site/.../thumb.webp",
+    "feed":  "https://media.featheredsocial.site/.../feed.webp"
+  }
+}
+```
+
+### B. Single file (FormData: `file`, `filename`, `type`, `folder`, `timestamp`)
+
+```json
+{
+  "success": true,
+  "url": "https://media.featheredsocial.site/posts/videos/720p/abc.mp4"
+}
+```
+
+**Folders the frontend sends:**
+
+| Folder | Used for |
+|---|---|
+| `posts/videos/original` | untouched source video |
+| `posts/videos/1080p` | high-quality compressed video |
+| `posts/videos/720p` | low-quality compressed video |
+| `posts/thumbnails` | WebP video thumbnails |
+| `posts` (default) | image bundle (default, bundle keys decide sub-path) |
+
+---
+
+## 7. Final DB Insert (`/api/posts` — single endpoint, images + videos)
+
+**JSON body sent for BOTH images and videos** (differs only in `type`, `media_type`, `media_urls`, `media_meta`):
+
+### Image example
+
+```json
+{
+  "user_id": 123,
+  "content": "Hello world",
+  "media_url": "https://media.featheredsocial.site/.../feed.webp",
+  "media_type": "image",
+  "media_urls": ["https://media.featheredsocial.site/.../feed.webp"],
+  "media_types": ["image"],
+  "media_meta": [{ "thumb": "https://media.featheredsocial.site/.../thumb.webp", "feed": "https://media.featheredsocial.site/.../feed.webp", "full": "https://media.featheredsocial.site/.../feed.webp", "type": "image" }],
+  "visibility": "public",
+  "location": "Dar es Salaam",
+  "tagged_users": [55, 66],
+  "feed_key": "post:1730000000000",
+  "type": "image"
+}
+```
+
+### Video example (same endpoint, same table)
+
+```json
+{
+  "user_id": 123,
+  "content": "Check this out",
+  "media_url": "https://media.featheredsocial.site/posts/videos/720p/abc.mp4",
+  "media_type": "video",
+  "media_urls": [
+    "https://media.featheredsocial.site/posts/videos/original/abc.mp4",
+    "https://media.featheredsocial.site/posts/videos/1080p/abc.mp4",
+    "https://media.featheredsocial.site/posts/videos/720p/abc.mp4",
+    "https://media.featheredsocial.site/posts/thumbnails/abc.webp"
+  ],
+  "media_types": ["video", "video", "video", "image"],
+  "media_meta": [{
+    "original": "https://media.featheredsocial.site/posts/videos/original/abc.mp4",
+    "1080": "https://media.featheredsocial.site/posts/videos/1080p/abc.mp4",
+    "720": "https://media.featheredsocial.site/posts/videos/720p/abc.mp4",
+    "thumbnail_url": "https://media.featheredsocial.site/posts/thumbnails/abc.webp",
+    "thumb": "https://media.featheredsocial.site/posts/thumbnails/abc.webp",
+    "feed": "https://media.featheredsocial.site/posts/videos/720p/abc.mp4",
+    "full": "https://media.featheredsocial.site/posts/videos/1080p/abc.mp4",
+    "type": "video",
+    "width": 1280,
+    "height": 720,
+    "duration": 14.6
+  }],
+  "visibility": "public",
+  "feed_key": "post:1730000000001",
+  "type": "video"
+}
+```
+
+**Expected response:**
+
+```json
+{
+  "success": true,
+  "post": {
+    "id": 9001,
+    "user_id": 123,
+    "content": "...",
+    "media_url": "...",
+    "media_type": "image | video",
+    "media_urls": [...],
+    "media_types": [...],
+    "media_meta": [...],
+    "type": "image | video",
+    "created_at": "2026-02-25T...Z",
+    "reactions_count": 0,
+    "comments_count": 0,
+    "shares_count": 0
+  }
+}
+```
+
+Fallback shape `{ success: true, post_id: 9001, id: 9001 }` is also handled.
+
+Then `normalizePost(newPostRaw)` maps to the UI `PostType`.
+
+---
+
+## 8. Progress UI
+
+```tsx
+// Home feed banner
+{postUploadState && (
+  <PostUploadProgressBanner
+    uploadState={postUploadState}
+    onDismiss={() => setPostUploadState(null)}
+  />
+)}
+
+// Floating pill (bottom of screen, all views)
+{postUploadState && <PostUploadBottomPill uploadState={postUploadState} />}
+```
+
+**`PostUploadState`** (from `./components/PostUploadProgress`):
+
+```ts
+interface PostUploadState {
+  isUploading: boolean;
+  progress: number;
+  title: string;
+  secondaryStatus?: string;
+  previewUrl?: string;
+  isSuccess: boolean;
+  error?: string;
+}
+```
+
+**Progress milestones:**
+
+| Step | Progress | Title |
+|---|---|---|
+| Start | 15% | "Uploading your post…" |
+| Images preparing | 30% | "Preparing and optimizing photos…" |
+| Video preparing | 40% | "Uploading and processing video…" |
+| Images completed | 30→85% | "Uploaded photo X of Y…" |
+| Publishing | 90% | "Publishing post to your timeline…" |
+| Success | 100% | "Post uploaded successfully!" (auto-clears 2.8s) |
+
+*(The old 75% "Attaching reel endpoints…" step is gone with the `/api/reels` block.)*
+
+---
+
+## 9. Full Data Flow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  1. UI:  CreatePost / CreatePostModal / mobile gallery input    │
+│     → calls  createPost(text, files, meta)                      │
+└──────────────────────────────────┬──────────────────────────────┘
+                                   │
+                    ┌──────────────┴──────────────┐
+                    │   setPostUploadState(15%)   │
+                    └──────────────┬──────────────┘
+                                   │
+              ┌────────────────────┼────────────────────┐
+              │                    │                    │
+       ┌──────▼──────┐      ┌──────▼──────┐      ┌──────▼──────┐
+       │  NATIVE     │      │  IMAGE(S)   │      │  VIDEO(S)   │
+       │  (Flutter)  │      │             │      │             │
+       └──────┬──────┘      └──────┬──────┘      └──────┬──────┘
+              │                    │                    │
+       use meta                buildImageUpload     compressVideoDual
+       URLs as-is              Bundle(file)          + generateVideoThumb
+              │                    │                    │
+              │              FormData:               4× uploadToCloudflareR2:
+              │              - thumbnail              - original
+              │              - feed                   - 1080p
+              │              - original               - 720p
+              │                    │                  - thumbnail
+              │            POST /api/upload            │
+              │            (3 variants)          POST /api/upload (×4)
+              │                    │                    │
+              │              {thumb,feed,           {orig,1080,720,thumb}
+              │               full URLs}                 │
+              │                    │                    │
+              │              media_urls =           media_urls =
+              │              [feed_1, feed_2...]     [orig,1080,720,thumb]
+              │              media_meta =           media_meta =
+              │              [{thumb,feed,full}]     [{orig,1080,720,thumb,...}]
+              │                    │                    │
+              └────────────────────┼────────────────────┘
+                                   │
+                    ┌──────────────▼──────────────┐
+                    │  setPostUploadState(90%)    │
+                    │  "Publishing post…"         │
+                    └──────────────┬──────────────┘
+                                   │
+                    ┌──────────────▼──────────────┐
+                    │  POST /api/posts            │  ← SINGLE endpoint
+                    │  (JSON — image OR video)    │    for both types
+                    │  → {success, post}          │
+                    └──────────────┬──────────────┘
+                                   │
+                    ┌──────────────▼──────────────┐
+                    │  normalizePost(newPostRaw)  │
+                    │  setPosts([post, ...prev])  │
+                    │  setProfilePosts([...])     │
+                    │  pushSeenIds([post.id])     │
+                    └──────────────┬──────────────┘
+                                   │
+                    ┌──────────────▼──────────────┐
+                    │  setPostUploadState(100%)   │
+                    │  "Post uploaded ✓"          │
+                    │  auto-clear after 2.8s      │
+                    └─────────────────────────────┘
+
+        ❌ No /api/reels call. 
+        ❌ No reel_id in payload.
+        ✅ Single posts-table row for both images and videos.
+```
+
+---
+
+## 10. Backend Requirements
+
+### `/api/upload` (POST, multipart) — writes to `media.featheredsocial.site`
+
+| Form field(s) | Mode | Response |
+|---|---|---|
+| `thumbnail`, `feed`, `original` | image bundle | `{ success, uploaded:{thumbnail:{url},feed:{url},original:{url}}, media_urls:{thumb,feed} }` |
+| `file`, `filename`, `type`, `folder`, `timestamp` | single file | `{ success, url }` |
+
+R2 bucket must serve from **`https://media.featheredsocial.site/`** (custom domain). All returned URLs must be absolute on this host.
+
+### `/api/posts` (POST, JSON) — single insert for images AND videos
+
+```sql
+CREATE TABLE posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  content TEXT,
+  media_url TEXT,
+  media_type TEXT,             -- 'image' | 'video' | 'audio' | null
+  media_urls TEXT,             -- JSON string of array
+  media_types TEXT,            -- JSON string of array
+  media_meta TEXT,             -- JSON string of array
+  type TEXT,                   -- 'text' | 'image' | 'video' | 'audio'
+  visibility TEXT DEFAULT 'public',
+  location TEXT,
+  feeling TEXT,
+  tagged_users TEXT,           -- JSON string
+  background TEXT,
+  colours TEXT,
+  background_style TEXT,
+  link_preview TEXT,           -- JSON string
+  song_name TEXT,
+  song_id TEXT,
+  audio_url TEXT,
+  feed_key TEXT UNIQUE,
+  reactions_count INTEGER DEFAULT 0,
+  comments_count INTEGER DEFAULT 0,
+  shares_count INTEGER DEFAULT 0,
+  views INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT
+);
+```
+
+Return `{ success: true, post: {...row} }`.
+
+> ⚠️ **No `reel_id` column

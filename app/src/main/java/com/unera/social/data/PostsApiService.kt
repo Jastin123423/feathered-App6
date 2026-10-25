@@ -203,7 +203,7 @@ object PostsApiService {
     }
 
     /**
-     * Create post via POST /api/posts
+     * Create post via POST /api/posts — single endpoint for text, images, and videos
      */
     suspend fun createPost(
         userId: Long,
@@ -211,20 +211,23 @@ object PostsApiService {
         mediaUrl: String? = null,
         mediaUrls: List<String> = emptyList(),
         mediaType: String? = null,
+        mediaTypes: List<String> = emptyList(),
         videoUrl: String? = null,
         thumbnailUrl: String? = null,
         mediaMeta: List<MediaMetaItem> = emptyList(),
         feeling: String? = null,
         location: String? = null,
         background: String? = null,
-        taggedUsers: List<Long> = emptyList()
+        taggedUsers: List<Long> = emptyList(),
+        type: String? = null,
+        visibility: String = "public"
     ): Post? = withContext(Dispatchers.IO) {
         try {
             val url = URL("$BASE_URL/api/posts")
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 15000
-                readTimeout = 15000
+                connectTimeout = 20000
+                readTimeout = 20000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("Accept", "application/json")
@@ -240,10 +243,15 @@ object PostsApiService {
                     put("media_urls", JSONArray(mediaUrls))
                 }
                 if (!mediaType.isNullOrBlank()) put("media_type", mediaType)
+                if (mediaTypes.isNotEmpty()) {
+                    put("media_types", JSONArray(mediaTypes))
+                }
                 if (!videoUrl.isNullOrBlank()) put("video_url", videoUrl)
-                if (!thumbnailUrl.isNullOrBlank()) {
-                    put("thumbnail_url", thumbnailUrl)
-                    put("thumb_url", thumbnailUrl)
+                val resolvedThumb = thumbnailUrl ?: mediaMeta.firstOrNull()?.thumbnailUrl ?: mediaMeta.firstOrNull()?.thumb
+                if (!resolvedThumb.isNullOrBlank()) {
+                    put("thumbnail_url", resolvedThumb)
+                    put("thumb_url", resolvedThumb)
+                    put("thumb", resolvedThumb)
                 }
                 if (mediaMeta.isNotEmpty()) {
                     val metaArray = JSONArray()
@@ -252,10 +260,15 @@ object PostsApiService {
                             if (!item.original.isNullOrBlank()) put("original", item.original)
                             if (!item.resolution1080.isNullOrBlank()) put("1080", item.resolution1080)
                             if (!item.resolution720.isNullOrBlank()) put("720", item.resolution720)
-                            if (!item.thumbnailUrl.isNullOrBlank()) put("thumb", item.thumbnailUrl)
+                            val th = item.thumbnailUrl ?: item.thumb
+                            if (!th.isNullOrBlank()) {
+                                put("thumbnail_url", th)
+                                put("thumb", th)
+                            }
                             if (!item.feed.isNullOrBlank()) put("feed", item.feed)
                             if (!item.full.isNullOrBlank()) put("full", item.full)
-                            if (!item.type.isNullOrBlank()) put("type", item.type)
+                            val itemType = if (!item.type.isNullOrBlank()) item.type else (if (mediaType == "video") "video" else "image")
+                            put("type", itemType)
                             if (item.width != null) put("width", item.width)
                             if (item.height != null) put("height", item.height)
                             if (item.duration != null) put("duration", item.duration)
@@ -264,6 +277,10 @@ object PostsApiService {
                     }
                     put("media_meta", metaArray)
                 }
+                val postType = type ?: (if (mediaType == "video") "video" else if (mediaType == "image") "image" else "text")
+                put("type", postType)
+                put("feed_key", "post:${System.currentTimeMillis()}")
+                put("visibility", visibility)
                 if (!feeling.isNullOrBlank()) put("feeling", feeling)
                 if (!location.isNullOrBlank()) put("location", location)
                 if (!background.isNullOrBlank()) {
